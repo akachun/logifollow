@@ -112,8 +112,22 @@ def build(rid, slot, b2, b3, params):
     return bytes(([rid, slot, b2, b3] + list(params) + [0] * ln)[:ln])
 
 
-def hidpp2(rid, slot, fidx, func, params):
-    return build(rid, slot, fidx, ((func & 0x0F) << 4) | SW_ID, params)
+# 요청마다 swID 를 돌려 쓴다. 같은 feature/function 을 연달아 부를 때
+# 앞 요청의 늦은 응답이 뒤 요청의 것으로 오인되는 것을 막는다.
+# 0x0B 는 Logi Options+ 가 쓰므로 뺀다.
+SW_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15]
+_sw_i = [0]
+
+
+def next_sw():
+    _sw_i[0] = (_sw_i[0] + 1) % len(SW_IDS)
+    return SW_IDS[_sw_i[0]]
+
+
+def hidpp2(rid, slot, fidx, func, params, sw=None):
+    if sw is None:
+        sw = SW_ID
+    return build(rid, slot, fidx, ((func & 0x0F) << 4) | (sw & 0x0F), params)
 
 
 VENDOR_RECEIVER = 0xFF00   # 리시버 경유
@@ -170,8 +184,9 @@ def transact(h, slot, fidx, func, params, rid=REPORT_SHORT,
     같은 feature/function 을 인자만 바꿔 연달아 부를 때 앞 요청의 늦은
     응답을 뒤 요청의 것으로 오인해 표가 한 칸씩 밀릴 수 있다.
     """
-    h.write(hidpp2(rid, slot, fidx, func, params))
-    want = ((func & 0x0F) << 4) | SW_ID
+    sw = next_sw()
+    h.write(hidpp2(rid, slot, fidx, func, params, sw))
+    want = ((func & 0x0F) << 4) | sw
     deadline = time.time() + timeout_ms / 1000.0
     while time.time() < deadline:
         r = h.read(64, timeout_ms=int((deadline - time.time()) * 1000) + 1)
@@ -183,7 +198,7 @@ def transact(h, slot, fidx, func, params, rid=REPORT_SHORT,
             if echo is not None and r[4] != echo:
                 continue          # 이전 요청의 늦은 응답
             return bytes(r)
-        if (r[3] & 0x0F) not in (0x00, SW_ID):
+        if (r[3] & 0x0F) not in (0x00, sw):
             Stats.foreign += 1
     return None
 

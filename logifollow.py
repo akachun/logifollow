@@ -111,8 +111,14 @@ def build(report_id, index, b2, b3, params):
     return bytes(([report_id, index, b2, b3] + list(params) + [0] * ln)[:ln])
 
 
-def request(report_id, index, feat_idx, func, params):
-    return build(report_id, index, feat_idx, ((func & 0x0F) << 4) | SW_ID, params)
+def request(report_id, index, feat_idx, func, params, sw_id=SW_ID):
+    return build(report_id, index, feat_idx, ((func & 0x0F) << 4) | (sw_id & 0x0F), params)
+
+
+# 요청마다 swID 를 돌려 쓴다. 같은 feature/function 을 연달아 부를 때
+# 앞 요청의 늦은 응답이 뒤 요청의 것으로 오인되는 것을 막는 유일한
+# 확실한 방법이다. 0x0B 는 Logi Options+ 가 쓰므로 뺀다.
+SW_IDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15]
 
 
 # ---- 전송 계층 ---------------------------------------------------------
@@ -295,6 +301,24 @@ class Session:
     def __init__(self, rx):
         self.rx = rx
         self.pending = []
+        self._sw = 0
+
+    def _next_sw(self):
+        self._sw = (self._sw + 1) % len(SW_IDS)
+        return SW_IDS[self._sw]
+
+    def _flush_stale(self):
+        """요청 직전에 큐에 남은 것을 치운다.
+
+        앞 요청이 타임아웃된 뒤 늦게 온 응답이 남아 있으면 곤란하다.
+        이벤트는 절대 버리면 안 되므로 pending 으로 옮기고 지난 응답만 버린다.
+        """
+        while True:
+            r = self.rx.read(0)
+            if not r:
+                return
+            if len(r) >= 4 and self._is_event(r) and len(self.pending) < 64:
+                self.pending.append(r)
 
     def read(self, timeout_ms):
         if self.pending:
@@ -317,9 +341,11 @@ class Session:
         밀릴 수 있다. 0x1815 응답은 첫 바이트로 호스트 번호를 되돌려주므로
         그것으로 가린다.
         """
-        if not self.rx.write(request(report_id, index, feat_idx, func, params)):
+        self._flush_stale()
+        sw = self._next_sw()
+        if not self.rx.write(request(report_id, index, feat_idx, func, params, sw)):
             return None
-        want = ((func & 0x0F) << 4) | SW_ID
+        want = ((func & 0x0F) << 4) | sw
         end = time.time() + timeout_ms / 1000.0
         while True:
             left = int((end - time.time()) * 1000)
@@ -435,7 +461,8 @@ class Session:
     def set_host(self, dev, host):
         """전환. 기기가 즉시 링크를 끊으므로 응답을 기다리지 않는다."""
         return self.rx.write(request(REPORT_SHORT, dev.slot, dev.ch_idx,
-                                     CH_SET_CURRENT_HOST, [host, 0, 0]))
+                                     CH_SET_CURRENT_HOST, [host, 0, 0],
+                                     self._next_sw()))
 
 
 # ---- 표시 --------------------------------------------------------------
