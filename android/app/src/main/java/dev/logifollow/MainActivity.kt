@@ -160,10 +160,19 @@ class MainActivity : Activity() {
 
     // ---- 화면 ---------------------------------------------------------
 
+    private val versionLabel: String by lazy {
+        try {
+            "v" + packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (e: Exception) {
+            "v?"
+        }
+    }
+
     private fun render() {
         val s = Bus.state
         val sb = StringBuilder()
         sb.append(if (s.running) "● 감시 중" else "○ 정지")
+        sb.append("   ").append(versionLabel)
         s.receiver?.let { sb.append("\n리시버   ").append(it) }
         s.transport?.let { sb.append("\n전송     ").append(it) }
         s.keyboard?.let { sb.append("\n키보드   ").append(it) }
