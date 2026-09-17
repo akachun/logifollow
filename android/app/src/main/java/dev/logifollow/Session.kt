@@ -36,6 +36,26 @@ class Session(private val t: UsbTransport, private val log: (String) -> Unit) {
     var lastError = 0
         private set
 
+    private var swIndex = 0
+
+    private fun nextSw(): Int {
+        swIndex = (swIndex + 1) % Hidpp.SW_IDS.size
+        return Hidpp.SW_IDS[swIndex]
+    }
+
+    /**
+     * 요청 직전에 큐에 남은 것을 치운다.
+     *
+     * 앞 요청이 타임아웃된 뒤 늦게 온 응답이 남아 있으면 곤란하다.
+     * 이벤트는 절대 버리면 안 되므로 pending 으로 옮기고 지난 응답만 버린다.
+     */
+    private fun flushStale() {
+        while (true) {
+            val r = t.read(1) ?: return
+            if (r.size >= 4 && isEventLike(r)) stash(r)
+        }
+    }
+
     fun read(timeoutMs: Int): ByteArray? = pending.removeFirstOrNull() ?: t.read(timeoutMs)
 
     fun transact(
@@ -47,11 +67,13 @@ class Session(private val t: UsbTransport, private val log: (String) -> Unit) {
         timeoutMs: Int = NORMAL_TIMEOUT_MS
     ): ByteArray? {
         lastError = 0
-        if (!t.write(Hidpp.request(reportId, index, featIdx, func, params))) {
+        flushStale()
+        val sw = nextSw()
+        if (!t.write(Hidpp.request(reportId, index, featIdx, func, params, sw))) {
             log("전송 실패 (idx=0x%02X feat=0x%02X func=%d)".format(index, featIdx, func))
             return null
         }
-        val want = ((func and 0x0F) shl 4) or Hidpp.SW_ID
+        val want = ((func and 0x0F) shl 4) or sw
         val end = System.currentTimeMillis() + timeoutMs
         while (true) {
             val left = (end - System.currentTimeMillis()).toInt()
@@ -222,7 +244,7 @@ class Session(private val t: UsbTransport, private val log: (String) -> Unit) {
     fun setCurrentHost(d: DevInfo, host: Int): Boolean {
         val pkt = Hidpp.request(
             Hidpp.REPORT_SHORT, d.slot, d.changeHostIdx,
-            Hidpp.CH_SET_CURRENT_HOST, intArrayOf(host, 0, 0)
+            Hidpp.CH_SET_CURRENT_HOST, intArrayOf(host, 0, 0), nextSw()
         )
         log("      => %s  %s".format(d.label, Hidpp.hex(pkt)))
         return t.write(pkt)

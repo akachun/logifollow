@@ -37,6 +37,18 @@ logifollow 는 이름 대신 기기가 직접 알려주는 **무선 엔드포인
 조합을 전부 검증한 결론이다. HANDOFF.md 의 "블루투스 직결로는 채널 전환을
 트리거할 수 없다" 항목 참조. **모든 채널을 Bolt 리시버로 맞춰라.**
 
+## 바로 받기
+
+빌드 없이 쓰려면 [`packages/`](packages/) 에 최신 산출물이 있다.
+
+| | |
+|---|---|
+| 데스크톱 | `packages/logifollow-*.zip` — 풀고 `START-HERE.txt` |
+| 안드로이드 | `packages/LogiFollow-debug.apk` — `adb install -r` |
+
+zip 에는 hidapi 휠과 윈도우용 파이썬 설치본이 들어 있어 **인터넷 없이도
+설치된다.**
+
 ## 설치
 
 ### 한 파일로 옮기기

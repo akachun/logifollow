@@ -94,9 +94,22 @@ object Hidpp {
         return out
     }
 
+    /**
+     * 요청마다 돌려 쓰는 swID 목록.
+     *
+     * 같은 feature 의 같은 function 을 인자만 바꿔 연달아 부를 때, 응답을
+     * 구분할 수단이 swID 뿐이다. 고정값을 쓰면 앞 요청이 타임아웃된 뒤
+     * 늦게 도착한 응답이 다음 요청의 것으로 오인돼 결과가 한 칸씩 밀린다.
+     * 0x0B 는 Logi Options+ 가 쓰므로 뺀다.
+     */
+    val SW_IDS = intArrayOf(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14, 15)
+
     /** HID++ 2.0 요청. b3 = (func << 4) | swID */
-    fun request(reportId: Int, index: Int, featIdx: Int, func: Int, params: IntArray): ByteArray =
-        build(reportId, index, featIdx, ((func and 0x0F) shl 4) or SW_ID, params)
+    fun request(
+        reportId: Int, index: Int, featIdx: Int, func: Int, params: IntArray,
+        swId: Int = SW_ID
+    ): ByteArray =
+        build(reportId, index, featIdx, ((func and 0x0F) shl 4) or (swId and 0x0F), params)
 
     fun hex(b: ByteArray, from: Int = 0, to: Int = b.size): String {
         val sb = StringBuilder()
