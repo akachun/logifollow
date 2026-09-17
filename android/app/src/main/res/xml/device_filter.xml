@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Logi Bolt : VID 0x046D (1133) / PID 0xC548 (50504) -->
+    <usb-device vendor-id="1133" product-id="50504" />
+    <!-- Unifying 리시버들도 같은 프로토콜이라 함께 받아둔다 -->
+    <usb-device vendor-id="1133" product-id="49198" /> <!-- 0xC52E -->
+    <usb-device vendor-id="1133" product-id="49208" /> <!-- 0xC538 -->
+    <usb-device vendor-id="1133" product-id="50503" /> <!-- 0xC547 -->
+</resources>

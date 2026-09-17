@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="sync"
+        android:enabled="true"
+        android:icon="@drawable/ic_notify"
+        android:shortcutShortLabel="@string/sc_sync"
+        android:shortcutLongLabel="@string/sc_sync_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="dev.logifollow"
+            android:targetClass="dev.logifollow.QuickActivity">
+            <extra android:name="cmd" android:value="sync" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="ch1"
+        android:enabled="true"
+        android:icon="@drawable/ic_notify"
+        android:shortcutShortLabel="@string/sc_ch1">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="dev.logifollow"
+            android:targetClass="dev.logifollow.QuickActivity">
+            <extra android:name="cmd" android:value="switch" />
+            <extra android:name="host" android:value="0" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="ch2"
+        android:enabled="true"
+        android:icon="@drawable/ic_notify"
+        android:shortcutShortLabel="@string/sc_ch2">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="dev.logifollow"
+            android:targetClass="dev.logifollow.QuickActivity">
+            <extra android:name="cmd" android:value="switch" />
+            <extra android:name="host" android:value="1" />
+        </intent>
+    </shortcut>
+    <shortcut
+        android:shortcutId="ch3"
+        android:enabled="true"
+        android:icon="@drawable/ic_notify"
+        android:shortcutShortLabel="@string/sc_ch3">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="dev.logifollow"
+            android:targetClass="dev.logifollow.QuickActivity">
+            <extra android:name="cmd" android:value="switch" />
+            <extra android:name="host" android:value="2" />
+        </intent>
+    </shortcut>
+</shortcuts>

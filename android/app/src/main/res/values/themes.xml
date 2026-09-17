@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#12161C</item>
+        <item name="android:colorAccent">#4EA1FF</item>
+        <item name="android:windowBackground">#0E1216</item>
+        <item name="android:statusBarColor">#0E1216</item>
+        <item name="android:navigationBarColor">#0E1216</item>
+        <item name="android:textColorPrimary">#E6EDF3</item>
+        <item name="android:textColorSecondary">#8B98A5</item>
+    </style>
+
+    <style name="QuickTheme" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowNoDisplay">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+</resources>

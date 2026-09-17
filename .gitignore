@@ -1,0 +1,24 @@
+# 파이썬 환경
+.venv*/
+__pycache__/
+*.pyc
+
+# 오프라인 설치용으로 내려받는 것들 (install/fetch-*.py 로 재생성)
+vendor/
+
+# 배포 산출물 (install/make-bundle.sh 로 재생성)
+dist/
+
+# 안드로이드 빌드
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/*.apk
+
+# 로컬 실행 흔적
+*.log
+restore_optionsplus.sh
+
+# macOS
+.DS_Store

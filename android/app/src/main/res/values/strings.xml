@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LogiFollow</string>
+    <string name="sc_sync">지금 맞추기</string>
+    <string name="sc_sync_long">마우스를 키보드 채널로</string>
+    <string name="sc_ch1">마우스 → 1</string>
+    <string name="sc_ch2">마우스 → 2</string>
+    <string name="sc_ch3">마우스 → 3</string>
+</resources>
