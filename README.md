@@ -98,8 +98,14 @@ python install/fetch-wheels.py --linux    # 리눅스까지 (18MB 늘어남)
 ./install/macos-service.sh install    # 로그인 시 자동 실행 (macOS)
 ```
 
-상태와 로그: `./install/macos-service.sh status`
-해제: `./install/macos-service.sh uninstall`
+| | |
+|---|---|
+| 상태·로그 | `./install/macos-service.sh status` |
+| 재시작 | `./install/macos-service.sh restart` |
+| 해제 | `./install/macos-service.sh uninstall` |
+
+리시버를 뽑았다 꽂거나 다른 포트로 옮긴 뒤 동작이 이상하면 `restart` 가
+가장 빠르다.
 
 ### Windows
 

@@ -117,6 +117,17 @@ uninstall)
     rm -f "$PLIST"
     echo "해제했습니다."
     ;;
+restart)
+    # 등록은 그대로 두고 프로세스만 죽였다 살린다.
+    # 리시버를 바꿔 꽂았을 때 가장 빠른 복구 방법이다.
+    if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
+        launchctl kickstart -k "gui/$(id -u)/$LABEL" && echo "재시작했습니다."
+        echo "확인:  ./install/macos-service.sh status"
+    else
+        echo "등록돼 있지 않습니다. 먼저:  ./install/macos-service.sh install"
+        exit 1
+    fi
+    ;;
 status)
     echo "== 등록 =="
     if launchctl print "gui/$(id -u)/$LABEL" >/dev/null 2>&1; then
@@ -169,5 +180,5 @@ status)
     fi
     ;;
 *)
-    echo "사용법: $0 install|uninstall|status"; exit 1;;
+    echo "사용법: $0 install|restart|uninstall|status"; exit 1;;
 esac
