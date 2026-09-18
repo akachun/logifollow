@@ -403,6 +403,11 @@ class Session:
             for host in range(d.n_hosts):
                 r = self.transact(slot, d.hi_idx, HI_GET_HOST_DESC, [host, 0, 0],
                                   report_id=REPORT_LONG, echo=host)
+                if r is None:
+                    # 막 재연결된 기기는 첫 요청에 느리다. 조금 더 기다려 한 번 더.
+                    # 이벤트 처리가 밀리지 않게 대기는 1.2초로 묶는다.
+                    r = self.transact(slot, d.hi_idx, HI_GET_HOST_DESC, [host, 0, 0],
+                                      report_id=REPORT_LONG, echo=host, timeout_ms=1200)
                 if RAW:
                     out("    raw 슬롯%d host%d -> %s"
                         % (slot, host, hexs(r[:16]) if r else "(응답 없음)"))
@@ -636,8 +641,10 @@ def handle(s, r, kb, ms, args):
             fresh = s.read_slot(ms.slot)
             if fresh.cur_host is not None:
                 ms.cur_host = fresh.cur_host
-            if fresh.desc:
-                ms.desc = fresh.desc
+            # 통째로 교체하면 안 된다. 방금 깨어난 기기는 일부 채널만
+            # 읽히는 일이 있는데, 그때 이미 알고 있던 값을 지워버리면
+            # 하필 실패한 그 채널의 대응을 잃는다. 병합만 한다.
+            ms.desc.update(fresh.desc)
             out("           마우스 현재 %s" % chan(ms.cur_host))
         return
 
