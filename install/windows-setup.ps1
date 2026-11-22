@@ -61,7 +61,7 @@ if ($Status) {
     Write-Host ""
     Write-Host "== 로그 (마지막 20줄) =="
     if (Test-Path $LogFile) {
-        if ((Get-Item $LogFile).Length -gt 0) { Get-Content $LogFile -Tail 20 }
+        if ((Get-Item $LogFile).Length -gt 0) { Get-Content $LogFile -Encoding UTF8 -Tail 20 }
         else { Write-Host "(비어 있음 - 프로세스가 아무것도 찍지 못하고 죽었다는 뜻입니다)" }
     } else { Write-Host "(로그 파일 없음)" }
     exit 0
