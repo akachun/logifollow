@@ -483,6 +483,7 @@ def _run_macos(cmd, args, out, stop_event=None):
 def _run_bleak(cmd, args, out, stop_event=None):
     try:
         from bleak import BleakClient, BleakScanner
+        from bleak.backends.device import BLEDevice
     except ImportError:
         out("BLE++ 모드에는 bleak 가 필요합니다:  pip install bleak")
         return 1
@@ -491,10 +492,13 @@ def _run_bleak(cmd, args, out, stop_event=None):
         return ":".join("%02X" % ((addr_int >> (8 * i)) & 0xFF) for i in range(5, -1, -1))
 
     async def _discover_connected_ble():
-        """OS 에 이미 연결된 BLE 기기들의 {address: name} 을 찾는다.
+        """OS 에 이미 연결된 BLE 기기들의 {mac: (name, ble_device_or_addr, addr_type)} 를 찾는다.
 
-        Windows 는 이미 연결된 BLE HID 기기가 광고(Advertising)를 하지 않으므로
-        WinRT DeviceInformation 으로 페어링/연결된 BLE 기기의 MAC 주소를 직접 조회한다.
+        Windows 는 이미 연결된 BLE HID 기기가 광고(Advertising)를 하지 않는다.
+        또한 BleakClient 에 문자열 MAC 을 넘기면 내부적으로 BleakScanner 광고 스캔을
+        먼저 돌려 타임아웃으로 실패한다.
+        따라서 WinRT 로 연결된 BLE 기기의 MAC 과 address_type 을 직접 조회한 뒤
+        BLEDevice 객체로 감싸 넘겨 광고 스캔을 완전히 건너뛴다.
         """
         found = {}
         if sys.platform == "win32":
@@ -503,31 +507,45 @@ def _run_bleak(cmd, args, out, stop_event=None):
                 from winrt.windows.devices.bluetooth import (
                     BluetoothLEDevice, BluetoothConnectionStatus
                 )
-                # 1순위: 현재 연결된 BLE 기기
+                find_fn = (getattr(DeviceInformation, "find_all_async_aqs_filter", None)
+                           or getattr(DeviceInformation, "find_all_async"))
                 aqs_conn = BluetoothLEDevice.get_device_selector_from_connection_status(
                     BluetoothConnectionStatus.CONNECTED
                 )
-                infos = await DeviceInformation.find_all_async_aqs_filter(aqs_conn)
+                infos = await find_fn(aqs_conn)
                 for info in infos:
                     try:
                         ble = await BluetoothLEDevice.from_id_async(info.id)
                         if ble and ble.bluetooth_address:
                             mac = _u64_to_mac(ble.bluetooth_address)
-                            found[mac] = info.name or mac
+                            atype = None
+                            try:
+                                # 0=Public, 1=Random
+                                at = int(ble.bluetooth_address_type)
+                                atype = "public" if at == 0 else ("random" if at == 1 else None)
+                            except Exception:
+                                pass
+                            name = info.name or getattr(ble, "name", None) or mac
+                            # BLEDevice 로 감싸면 BleakClient 가 광고 스캔을 건너뛴다
+                            try:
+                                bdev = BLEDevice(mac, name, None, rssi=-127)
+                            except TypeError:
+                                bdev = BLEDevice(mac, name, None)
+                            found[mac] = (name, bdev, atype)
                         if ble and hasattr(ble, "close"):
                             ble.close()
-                    except Exception:
-                        continue
+                    except Exception as e:
+                        out("  WinRT 기기 조회 오류(%s): %s" % (getattr(info, "name", "?"), e))
             except Exception as e:
-                out("  WinRT 연결 기기 조회 경고(스캔으로 대체): %s" % e)
+                out("  WinRT 연결 기기 조회 실패: %s" % e)
 
         if not found:
             try:
                 devices = await BleakScanner.discover(timeout=3.0)
                 for d in devices:
-                    found[d.address] = d.name or d.address
-            except Exception:
-                pass
+                    found[d.address] = (d.name or d.address, d, None)
+            except Exception as e:
+                out("  BLE 스캔 실패: %s" % e)
         return found
 
     async def _main():
@@ -628,14 +646,21 @@ def _run_bleak(cmd, args, out, stop_event=None):
 
         async def connect_candidates(only_known=False):
             cands = await _discover_connected_ble()
+            if not only_known:
+                out("  BLE 후보 %d개: %s" % (
+                    len(cands), ", ".join("%s(%s)" % (v[0], k) for k, v in cands.items()) or "없음"
+                ))
             newly = []
-            for addr, name in cands.items():
+            for addr, (name, target_dev, atype) in cands.items():
                 if only_known and known_logi and addr not in known_logi:
                     continue
                 cur = devs.get(addr)
                 if cur and cur.connected and cur.handle and cur.handle.is_connected:
                     continue
-                client = BleakClient(addr, disconnected_callback=make_disconnect_cb(addr))
+                kwargs = {"disconnected_callback": make_disconnect_cb(addr)}
+                if sys.platform == "win32" and atype:
+                    kwargs["winrt"] = {"address_type": atype}
+                client = BleakClient(target_dev, **kwargs)
                 try:
                     await client.connect(timeout=5.0)
                     svc = client.services.get_service(LOGI_SVC_UUID)
@@ -682,7 +707,9 @@ def _run_bleak(cmd, args, out, stop_event=None):
                             if rd:
                                 dev.desc[h] = _hexs(bytes(rd[3:11]).rstrip(b"\x00"))
                     newly.append(dev)
-                except Exception:
+                except Exception as e:
+                    if not only_known:
+                        out("  BLE 연결 실패(%s): %s" % (name, e))
                     try:
                         await client.disconnect()
                     except Exception:
