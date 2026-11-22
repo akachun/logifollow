@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """logifollow — 키보드가 채널을 옮기면 마우스도 따라간다.
 
-로지텍 Bolt/Unifying 리시버 경유 전용. macOS / Windows / Linux.
+로지텍 Bolt/Unifying 리시버 및 블루투스 직결(BLE++ 커스텀 GATT) 지원.
+macOS / Windows / Linux.
 
-왜 리시버 전용인가:
-  블루투스 직결은 명령 전송은 되지만 **트리거가 안 된다**. macOS 에서
-  기기가 스스로 보내는 HID++ 알림이 오지 않고(공유 모드), 배타 점유는
-  root 로도 열리지 않는다. 조합을 전부 검증한 결론이다. HANDOFF.md 참조.
-
-무엇이 되고 무엇이 안 되는가:
-  마우스는 자기가 선택한 채널로만 수신한다. 마우스가 다른 컴퓨터에 가 있으면
-  이쪽 리시버는 말을 걸 수 없다. 그래서 "둘 다 여기 있을 때 키보드가 떠나면
-  마우스도 딸려 보낸다" 만 가능하다. 돌아올 때는 마우스 버튼으로 수동.
+전송 방식(--mode):
+  auto (기본) : USB 리시버가 있으면 리시버 모드, 없으면 BLE++ 직결 모드
+  usb         : Bolt/Unifying 리시버(0xFF00) 전용
+  ble         : 블루투스 직결(BLE++ GATT 00010000-...) 전용
 
 사용법:
   python logifollow.py map              채널 대응표 확인
   python logifollow.py follow           상시 감시 (이게 본 기능)
   python logifollow.py switch 3         마우스를 채널3 으로 (수동)
+  python logifollow.py --mode ble follow
 """
 
 import argparse
@@ -24,12 +21,13 @@ import ctypes
 import datetime
 import os
 import sys
+import threading
 import time
 
 try:
     import hid
 except ImportError:
-    sys.exit("hidapi 가 없습니다:  pip install hidapi")
+    hid = None
 
 # ---- 프로토콜 상수 (전부 실측으로 확정된 값) ----------------------------
 
@@ -70,13 +68,15 @@ RAW = False                       # map --raw : 원시 응답까지 찍는다
 # ---- 출력 --------------------------------------------------------------
 
 _LOG = None
+_OUT_LOCK = threading.Lock()
 
 
 def out(s=""):
-    print(s, flush=True)
-    if _LOG:
-        _LOG.write(s + "\n")
-        _LOG.flush()
+    with _OUT_LOCK:
+        print(s, flush=True)
+        if _LOG:
+            _LOG.write(s + "\n")
+            _LOG.flush()
 
 
 def ts():
@@ -142,6 +142,10 @@ class Receiver:
 
     @classmethod
     def open(cls, verbose=True):
+        if hid is None:
+            if verbose:
+                out("hidapi 가 없습니다:  pip install hidapi")
+            return None
         allow_shared_open()
         entries = {}
         for d in hid.enumerate(LOGITECH_VID, 0):
@@ -554,7 +558,7 @@ def cmd_switch(args):
         rx.close()
 
 
-def cmd_follow(args):
+def cmd_follow(args, stop_event=None):
     rx = Receiver.open()
     if not rx:
         return 1
@@ -564,7 +568,7 @@ def cmd_follow(args):
         # 기기가 다른 채널에 가 있으면 돌아올 때까지 기다린다.
         # 여기서 종료해버리면 launchd/작업스케줄러가 다시 띄울 때까지
         # 공백이 생겨서, 돌아오자마자 누른 전환을 놓친다.
-        while True:
+        while not (stop_event and stop_event.is_set()):
             devs = s.scan(need=(TYPE_KEYBOARD, TYPE_MOUSE))
             kb, ms = find_pair(devs)
             if kb and ms:
@@ -572,7 +576,12 @@ def cmd_follow(args):
             show(devs)
             out("%s  키보드와 마우스가 모두 이 리시버 채널에 있어야 합니다."
                 " 20초 후 다시 찾습니다." % ts())
-            time.sleep(20)
+            for _ in range(40):
+                if stop_event and stop_event.is_set():
+                    return 0
+                time.sleep(0.5)
+        if stop_event and stop_event.is_set():
+            return 0
         show(devs)
         mapping(kb, ms)
 
@@ -590,7 +599,7 @@ def cmd_follow(args):
         out("키보드 Easy-Switch 키를 누르세요.  (Ctrl-C 종료)")
         out("=" * 58 + "\n")
 
-        while True:
+        while not (stop_event and stop_event.is_set()):
             try:
                 r = s.read(200)
             except OSError as e:
@@ -598,6 +607,8 @@ def cmd_follow(args):
                 rx.close()
                 rx = None
                 for _ in range(60):
+                    if stop_event and stop_event.is_set():
+                        return 0
                     time.sleep(1.0)
                     rx = Receiver.open(verbose=False)
                     if rx:
@@ -615,6 +626,7 @@ def cmd_follow(args):
             if not r or len(r) < 4:
                 continue
             handle(s, r, kb, ms, args)
+        return 0
     except KeyboardInterrupt:
         out("\n종료합니다.")
         return 0
@@ -687,10 +699,25 @@ def handle(s, r, kb, ms, args):
         out("           => 마우스 -> %s  %s" % (chan(m[0]), "" if sent else "(전송 실패)"))
 
 
+def _has_usb_receiver():
+    if hid is None:
+        return False
+    allow_shared_open()
+    try:
+        return any(
+            (d.get("usage_page") or 0) == VENDOR_RECEIVER
+            for d in hid.enumerate(LOGITECH_VID, 0)
+        )
+    except Exception:
+        return False
+
+
 def main():
     global _LOG
     p = argparse.ArgumentParser(description="키보드를 따라 마우스 채널을 옮긴다")
     p.add_argument("--log", help="로그 파일 경로")
+    p.add_argument("--mode", choices=("auto", "usb", "ble"), default="auto",
+                   help="전송 방식: auto(기본, 리시버 우선 후 BLE++), usb, ble")
     sub = p.add_subparsers(dest="cmd", required=True)
     mp = sub.add_parser("map", help="채널 대응표 확인")
     mp.add_argument("--raw", action="store_true",
@@ -708,10 +735,76 @@ def main():
 
     global RAW
     RAW = getattr(args, "raw", False)
-    fn = {"map": cmd_map, "follow": cmd_follow, "switch": cmd_switch}[args.cmd]
     if not hasattr(args, "dry_run"):
         args.dry_run = False
-    return fn(args)
+
+    if args.mode == "ble":
+        import ble_transport
+        return ble_transport.run_ble(args.cmd, args, out)
+
+    if args.mode == "usb":
+        fn = {"map": cmd_map, "follow": cmd_follow, "switch": cmd_switch}[args.cmd]
+        return fn(args)
+
+    # auto: USB 리시버와 BLE++ 를 모두 확인해 동시 지원한다
+    has_usb = _has_usb_receiver()
+    has_ble = False
+    ble_transport = None
+    try:
+        import ble_transport as _bt
+        if _bt.is_ble_available():
+            ble_transport = _bt
+            has_ble = True
+    except Exception:
+        pass
+
+    if args.cmd == "map":
+        rc_usb = 1
+        rc_ble = 1
+        if has_usb:
+            out("== [USB 리시버] ==")
+            rc_usb = cmd_map(args)
+        if has_ble:
+            if has_usb:
+                out("\n== [블루투스 직결 (BLE++)] ==")
+            rc_ble = ble_transport.run_ble("map", args, out)
+        if not has_usb and not has_ble:
+            return cmd_map(args)
+        return 0 if (rc_usb == 0 or rc_ble == 0) else 1
+
+    if args.cmd == "switch":
+        if has_usb:
+            rc = cmd_switch(args)
+            if rc == 0 or not has_ble:
+                return rc
+        if has_ble:
+            return ble_transport.run_ble("switch", args, out)
+        return cmd_switch(args)
+
+    # follow: USB 와 BLE++ 를 동시에 감시한다
+    if has_usb and has_ble:
+        stop_ev = threading.Event()
+        out("== 하이브리드 감시 시작 (USB 리시버 + 블루투스 BLE++) ==")
+        t_usb = threading.Thread(target=cmd_follow, args=(args, stop_ev),
+                                 name="follow-usb", daemon=True)
+        t_ble = threading.Thread(target=ble_transport.run_ble,
+                                 args=("follow", args, out, stop_ev),
+                                 name="follow-ble", daemon=True)
+        t_usb.start()
+        t_ble.start()
+        try:
+            while t_usb.is_alive() or t_ble.is_alive():
+                time.sleep(0.3)
+        except KeyboardInterrupt:
+            out("\n종료합니다...")
+            stop_ev.set()
+            t_usb.join(timeout=3.0)
+            t_ble.join(timeout=3.0)
+        return 0
+
+    if has_ble and not has_usb:
+        return ble_transport.run_ble("follow", args, out)
+    return cmd_follow(args)
 
 
 if __name__ == "__main__":

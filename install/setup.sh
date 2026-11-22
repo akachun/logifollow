@@ -38,7 +38,24 @@ else
     fi
 fi
 
-"$VPY" -c "import hid; print('확인 완료')"
+"$VPY" -c "import hid; print('hidapi 확인 완료')"
+
+# BLE++ 직결용 의존성 (macOS: CoreBluetooth PyObjC, Linux: bleak)
+if [ "$(uname -s)" = "Darwin" ]; then
+    if ! "$VPY" -c "import CoreBluetooth, dispatch" 2>/dev/null; then
+        "$VPY" -m pip install --disable-pip-version-check -q \
+            pyobjc-framework-CoreBluetooth pyobjc-framework-libdispatch 2>/dev/null \
+            && echo "BLE++(CoreBluetooth) 설치 완료" \
+            || echo "참고: BLE++(CoreBluetooth) 미설치 (USB 리시버 모드는 정상 동작)"
+    fi
+else
+    if ! "$VPY" -c "import bleak" 2>/dev/null; then
+        "$VPY" -m pip install --disable-pip-version-check -q bleak 2>/dev/null \
+            && echo "BLE++(bleak) 설치 완료" \
+            || echo "참고: BLE++(bleak) 미설치 (USB 리시버 모드는 정상 동작)"
+    fi
+fi
+
 echo
 echo "대응표 확인:  ./.venv-hid/bin/python logifollow.py map"
 echo "상시 실행  :  ./install/macos-service.sh install"

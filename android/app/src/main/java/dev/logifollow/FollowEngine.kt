@@ -16,19 +16,12 @@ import java.util.concurrent.LinkedBlockingQueue
 class FollowEngine(
     private val usb: UsbManager,
     private val device: UsbDevice
-) : Runnable {
+) : Engine {
 
-    sealed class Cmd {
-        object Rescan : Cmd()
-        object Sync : Cmd()
-        object Stop : Cmd()
-        data class Switch(val host: Int) : Cmd()
-    }
+    @Volatile override var dryRun = false
+    @Volatile override var verbose = false
 
-    @Volatile var dryRun = false
-    @Volatile var verbose = false
-
-    private val queue = LinkedBlockingQueue<Cmd>()
+    private val queue = LinkedBlockingQueue<EngineCmd>()
     @Volatile private var alive = true
 
     private var transport: UsbTransport? = null
@@ -42,11 +35,11 @@ class FollowEngine(
 
     private var originalFlags: Int? = null
 
-    fun post(c: Cmd) = queue.offer(c)
+    override fun post(c: EngineCmd) = queue.offer(c)
 
-    fun stop() {
+    override fun stop() {
         alive = false
-        queue.offer(Cmd.Stop)
+        queue.offer(EngineCmd.Stop)
     }
 
     override fun run() {
@@ -189,16 +182,16 @@ class FollowEngine(
         }
     }
 
-    private fun handleCommand(s: Session, c: Cmd) {
+    private fun handleCommand(s: Session, c: EngineCmd) {
         when (c) {
-            is Cmd.Stop -> alive = false
-            is Cmd.Rescan -> rescan(s)
-            is Cmd.Switch -> {
+            is EngineCmd.Stop -> alive = false
+            is EngineCmd.Rescan -> rescan(s)
+            is EngineCmd.Switch -> {
                 val m = mouse
                 if (m == null) Bus.log("마우스를 모릅니다. 먼저 검색하세요.")
                 else sendMouse(s, m, c.host, "수동")
             }
-            is Cmd.Sync -> syncNow(s)
+            is EngineCmd.Sync -> syncNow(s)
         }
     }
 

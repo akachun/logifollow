@@ -8,8 +8,9 @@ including hosts that Logi Options+ refuses to handle.*
 
 | | |
 |---|---|
-| 데스크톱 | `logifollow.py` — macOS / Windows (둘 다 실기기 확인) / Linux (미확인) |
-| 안드로이드 (덱스) | `android/` — 별도 앱, [android/README.md](android/README.md) |
+| 데스크톱 | `logifollow.py` + `ble_transport.py` — macOS (Bolt + BLE++ 실기기 확인) / Windows (Bolt 실기기 확인, BLE++ 구현됨·미검증) / Linux (미확인) |
+| 안드로이드 (폰 / 덱스) | `android/` — USB Bolt + BLE++ 직결 하이브리드 앱, [android/README.md](android/README.md) |
+| iOS / iPadOS | `ios/` — SwiftUI + CoreBluetooth BLE++ 직결 앱, [ios/README.md](ios/README.md) |
 | 프로토콜 근거 | [HANDOFF.md](HANDOFF.md) — 전부 실측 |
 
 ## 왜 Options+ 로는 안 되는가
@@ -32,10 +33,12 @@ logifollow 는 이름 대신 기기가 직접 알려주는 **무선 엔드포인
 다른 컴퓨터에 가 있으면 이쪽에서는 말을 걸 방법이 없다. 프로토콜의 한계다.
 돌아올 때는 마우스 버튼으로 수동 전환해야 한다.
 
-**리시버 경유만 된다.** 블루투스 직결은 명령 전송(수동 전환)은 되지만
-**트리거가 안 된다** — 기기가 스스로 보내는 HID++ 알림이 오지 않는다.
-조합을 전부 검증한 결론이다. HANDOFF.md 의 "블루투스 직결로는 채널 전환을
-트리거할 수 없다" 항목 참조. **모든 채널을 Bolt 리시버로 맞춰라.**
+**USB Bolt 리시버와 블루투스(BLE++) 직결 모두 된다.**
+초기에는 표준 BLE HID(`0x1812` / `0xFF43`) 경로만 시도해 트리거 불가로 결론냈었으나,
+로지텍 벤더 커스텀 GATT 서비스(`00010000-0000-1000-8000-011F2000046D`, 특성 `00010001-...`, 18B BLE++ 포맷)를
+사용하면 macOS · Android · iOS/iPadOS 모두 OS의 HID 차단을 우회해 `0x1814` 알림 수신 및 마우스 전환이 가능하다.
+데스크톱 기본 모드(`--mode auto`)는 USB 리시버와 블루투스 세트가 함께 연결돼 있으면 **동시에 감시**한다.
+자세한 실측 내용은 [HANDOFF.md](HANDOFF.md) 참조.
 
 ## 바로 받기
 
@@ -138,10 +141,12 @@ venv 를 만들고 hidapi 를 깔고, 대응표를 보여준 뒤 로그온 시 �
 ## 사용
 
 ```
-python logifollow.py map          채널 대응표
-python logifollow.py follow       상시 감시 (본 기능)
+python logifollow.py map                채널 대응표 (USB + BLE++ 동시 출력)
+python logifollow.py follow             상시 감시 (USB + BLE++ 동시 감시)
 python logifollow.py follow --dry-run   판단만, 전송 안 함
-python logifollow.py switch 3     마우스를 채널3 으로 (수동)
+python logifollow.py --mode ble follow  블루투스 직결만 감시
+python logifollow.py --mode usb follow  USB 리시버만 감시
+python logifollow.py switch 3           마우스를 채널3 으로 (수동)
 python logifollow.py --log a.log follow
 ```
 
@@ -166,12 +171,15 @@ python logifollow.py --log a.log follow
 ## 파일
 
 ```
-logifollow.py      제품. 이것만 쓰면 된다
+logifollow.py      제품 본체 (USB Bolt + BLE++ 하이브리드)
+ble_transport.py   BLE++ 커스텀 GATT 백엔드 (macOS CoreBluetooth / Windows·Linux bleak)
+ble_gatt_probe.py  macOS CoreBluetooth BLE++ 진단/스니퍼 도구
 hidpp_probe9.py    리시버 진단 도구 (map/follow). 개발용
-hidpp_bt.py        블루투스 직결 진단 + 수동 전환. 트리거는 불가
-sniff_bt.py        리포트 덤프. 알림이 오는지 확인할 때
+hidpp_bt.py        블루투스 HID(0xFF43) 진단 + 수동 전환
+sniff_bt.py        HID 리포트 덤프
 legacy/            개발 과정의 probe1~8. 참고용
-android/           덱스용 안드로이드 앱
+android/           안드로이드 앱 (USB Bolt + BLE++ 직결, v0.3)
+ios/               iOS / iPadOS 앱 (SwiftUI + CoreBluetooth BLE++)
 ```
 
 ## 마우스가 끊기듯 움직인다면
@@ -188,16 +196,15 @@ android/           덱스용 안드로이드 앱
 
 | 플랫폼 | 상태 |
 |---|---|
-| macOS | 동작 확인 (맥 2대, LaunchAgent 상시) |
-| Windows | 동작 확인 (작업 스케줄러) |
-| Android / 삼성 덱스 | 동작 확인 (`android/` 앱) |
-| Linux | 미확인 (코드 경로는 macOS 와 동일) |
-| iOS / iPadOS | **불가능.** 서드파티가 HID 에 접근할 공개 API 가 없다 |
+| macOS | **동작 확인** (Bolt 리시버 + BLE++ 직결 동시 감시, LaunchAgent 상시) |
+| Windows | Bolt 리시버 **동작 확인** / BLE++ 직결(`bleak` + WinRT) 구현 완료 (**실기기 미검증**) |
+| Android / 삼성 덱스 | **동작 확인** (`android/` v0.3 — USB Bolt 리시버 + BLE++ 직결 모두 확인) |
+| iOS / iPadOS | **동작 확인** (`ios/` — CoreBluetooth BLE++ 직결, Xcode 빌드 설치) |
+| Linux | 미확인 (USB 코드 경로는 macOS 와 동일, BLE++ 는 `bleak`) |
 
-검증한 기기는 **Logitech MX Keys Mini + Signature Plus M750 + Logi Bolt
-리시버(`046D:C548`)** 다. 같은 HID++ 2.0 을 쓰는 다른 조합에서도 원리상
-동작해야 하지만 확인한 것은 아니다. feature index 와 슬롯 번호는
-하드코딩하지 않고 매번 조회하므로 기기가 달라도 대응한다.
+검증한 기기는 **Logitech MX Keys Mini + Signature Plus M750 (BLE++ 직결 및 Bolt 리시버)** 및
+**Alto Keys K98M + MX Master 4 (Logi Bolt 리시버 `046D:C548`)** 조합이다. 같은 HID++ 2.0/4.5 를 쓰는
+다른 조합에서도 원리상 동작해야 하며, feature index 와 슬롯 번호는 하드코딩하지 않고 매번 조회한다.
 
 ## 라이선스
 

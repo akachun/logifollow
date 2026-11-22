@@ -16,6 +16,10 @@ android/app/build/
 android/local.properties
 android/*.apk
 
+# iOS 빌드
+ios/build/
+ios/LogiFollow.xcodeproj/xcuserdata/
+
 # 로컬 실행 흔적
 *.log
 restore_optionsplus.sh

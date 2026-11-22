@@ -1,13 +1,17 @@
 package dev.logifollow
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.PendingIntent
+import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
@@ -104,27 +108,62 @@ class MainActivity : Activity() {
 
     private fun requestAndStart() {
         val dev = Usb.find(usb)
-        if (dev == null) {
-            Bus.log("로지텍 리시버가 보이지 않습니다. 허브와 리시버 연결을 확인하세요.")
-            Bus.setState { it.copy(problem = "리시버 없음") }
+        if (dev != null) {
+            if (usb.hasPermission(dev)) {
+                startUsbService()
+                return
+            }
+            Bus.log("USB 권한을 요청합니다: ${dev.productName ?: dev.deviceName}")
+            val pi = PendingIntent.getBroadcast(
+                this, 0,
+                Intent(ACTION_PERMISSION).setPackage(packageName),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+            )
+            usb.requestPermission(dev, pi)
             return
         }
-        if (usb.hasPermission(dev)) {
-            startService()
+
+        // USB 리시버가 없으면 블루투스 직결(BLE++) 모드로 시작
+        if (!hasBlePermission()) {
+            Bus.log("USB 리시버가 없어 블루투스(BLE++) 모드로 시작합니다. 근처 기기 권한을 허용하세요.")
+            requestBlePermission()
             return
         }
-        Bus.log("USB 권한을 요청합니다: ${dev.productName ?: dev.deviceName}")
-        val pi = PendingIntent.getBroadcast(
-            this, 0,
-            Intent(ACTION_PERMISSION).setPackage(packageName),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-        usb.requestPermission(dev, pi)
+        startBleService()
     }
 
-    private fun startService() {
+    private fun startService() = startUsbService()
+
+    private fun startUsbService() {
         val dev = Usb.find(usb) ?: return
-        FollowService.start(this, dev.deviceName, chkDry.isChecked, chkVerbose.isChecked)
+        FollowService.start(this, dev.deviceName, chkDry.isChecked, chkVerbose.isChecked, FollowService.MODE_USB)
+    }
+
+    private fun startBleService() {
+        FollowService.start(this, null, chkDry.isChecked, chkVerbose.isChecked, FollowService.MODE_BLE)
+    }
+
+    private fun hasBlePermission(): Boolean {
+        if (Build.VERSION.SDK_INT < 31) return true
+        return checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestBlePermission() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_BLE_PERM)
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_BLE_PERM) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                Bus.log("블루투스 권한을 받았습니다.")
+                startBleService()
+            } else {
+                Bus.log("블루투스 권한이 거부되었습니다.")
+            }
+        }
     }
 
     private fun switchMouse(host: Int) {
@@ -132,23 +171,29 @@ class MainActivity : Activity() {
     }
 
     /**
-     * 인터페이스와 엔드포인트 구조만 적는다. 점유하지 않으므로
-     * 마우스 입력에 영향이 없다. 클레임 전에 무엇이 있는지 보는 용도.
+     * USB 인터페이스 구조 및 페어링된 BLE 기기 목록을 출력한다.
      */
+    @SuppressLint("MissingPermission")
     private fun diagnose() {
         val list = Usb.candidates(usb)
         if (list.isEmpty()) {
-            Bus.log("로지텍 HID 기기가 없습니다. 연결된 USB 기기 " +
-                "${usb.deviceList.size}개.")
-            usb.deviceList.values.forEach {
-                Bus.log("  %s VID=0x%04X PID=0x%04X".format(
-                    it.productName ?: it.deviceName, it.vendorId, it.productId))
+            Bus.log("[USB] 로지텍 리시버 없음 (연결된 USB 기기 ${usb.deviceList.size}개)")
+        } else {
+            list.forEach {
+                Bus.log("[USB] " + UsbTransport.describe(it))
+                Bus.log("  권한: " + if (usb.hasPermission(it)) "있음" else "없음")
             }
+        }
+
+        if (!hasBlePermission()) {
+            Bus.log("[BLE] 근처 기기(BLUETOOTH_CONNECT) 권한이 없습니다.")
             return
         }
-        list.forEach {
-            Bus.log(UsbTransport.describe(it))
-            Bus.log("  권한: " + if (usb.hasPermission(it)) "있음" else "없음")
+        val bm = getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        val bonded = bm?.adapter?.bondedDevices ?: emptySet()
+        Bus.log("[BLE] 페어링된 블루투스 기기 ${bonded.size}개:")
+        bonded.forEach { d ->
+            Bus.log("  ${d.name ?: "(이름없음)"}  ${d.address}  type=${d.type}")
         }
     }
 
@@ -209,5 +254,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val ACTION_PERMISSION = "dev.logifollow.USB_PERMISSION"
+        private const val REQ_BLE_PERM = 8
     }
 }

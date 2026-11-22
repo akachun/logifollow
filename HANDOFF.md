@@ -548,6 +548,39 @@ USB3.1 Hub
 
 ---
 
+## 2026-11-22 돌파구 — BLE++ 커스텀 GATT로 블루투스 직결 & iOS/Android 전면 해결
+
+기존 결론(표준 HID `0x1812` / `0xFF43` 경로에서는 macOS 트리거 불가, Android `SecurityException`, iOS 공개 API 없음)은
+**표준 BLE HID 계층** 기준이었다. 로지텍 BLE 기기(MX Keys Mini, Signature Plus M750 등)가 별도로 노출하는
+**벤더 커스텀 GATT 서비스**를 사용하면 전 플랫폼에서 OS의 HID 차단을 완전히 우회할 수 있음을 실측 확인했다.
+
+### 실측으로 확정된 BLE++ 프로토콜
+
+| 항목 | 값 |
+|---|---|
+| Service UUID | `00010000-0000-1000-8000-011F2000046D` |
+| Characteristic UUID | `00010001-0000-1000-8000-011F2000046D` (`read, writeNoResp, write, notify`, CCCD `0x2902`) |
+| 패킷 길이 | **18바이트** (HID++ Long 20B에서 앞 2바이트 `11 FF` 제거) |
+| 패킷 구조 | `[featIdx, (func << 4) \| swID, params(16B)]` |
+| ChangeHost 이벤트 | `09 00 00 01 ...` (링크 끊김보다 약 46ms 먼저 Notify 도착, 실측 확인) |
+| 마우스 전환 전송 | `[chIdx, (0x01 << 4) \| swID, targetHost, 0...]` (`WriteWithoutResponse`로 지연 최소화) |
+
+- macOS/iOS `CoreBluetooth`는 `0x1812`는 숨기지만(`0개`), `retrieveConnectedPeripherals(withServices: [00010000-...])`로
+  시스템에 이미 연결된 MX Keys Mini / M750을 권한 오류나 seize 충돌 없이 바로 찾아 Notify 구독 및 Write가 가능하다.
+- Options+ 트래픽(`swID = 0x0B / 0x0E`)과 충돌 없이 공존한다 (`SW_IDS`에서 제외).
+- Android `BluetoothGatt`에서도 `0x1812` 블랙리스트 대상이 아닌 커스텀 UUID이므로 `SecurityException` 없이 동작한다.
+
+### 2026-11-22 기준 검증 현황
+
+| 플랫폼 | USB Bolt 리시버 | BLE++ 직결 (`00010000-...`) | 비고 |
+|---|---|---|---|
+| **macOS** | **실기기 확인** (K98M + MX Master 4) | **실기기 확인** (MX Keys Mini + M750) | `--mode auto`에서 USB + BLE 동시 감시 확인 |
+| **Android** | **실기기 확인** | **실기기 확인** (`android/` v0.3) | USB 없으면 자동으로 BLE++ 모드 시작 |
+| **iOS / iPadOS** | 불가 (공개 API 없음) | **실기기 확인** (`ios/` SwiftUI) | `ENABLE_DEBUG_DYLIB=NO`, `UIBackgroundModes: bluetooth-central` |
+| **Windows** | **실기기 확인** | 구현 완료 (**실기기 미검증**) | `ble_transport.py` WinRT + `bleak` 백엔드 |
+
+---
+
 ## 검증하지 못한 것
 
 **허브가 오면 이 순서로 확인할 것.**

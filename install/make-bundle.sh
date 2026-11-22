@@ -27,7 +27,7 @@ rm -rf "$STAGE" "$OUT/$NAME.zip"
 mkdir -p "$STAGE"
 
 # 본체와 도구
-cp logifollow.py hidpp_probe9.py hidpp_bt.py sniff_bt.py README.md HANDOFF.md "$STAGE/"
+cp logifollow.py ble_transport.py ble_gatt_probe.py hidpp_probe9.py hidpp_bt.py sniff_bt.py README.md HANDOFF.md "$STAGE/"
 cp -R install "$STAGE/"
 cp -R vendor "$STAGE/"
 
@@ -90,9 +90,10 @@ logifollow - 키보드를 따라 마우스 채널을 옮긴다
   "대응 없음" 이 나오면 그 채널은 키보드와 마우스가 서로 다른 리시버에
   페어링돼 있다는 뜻입니다.
 
-[ 전제 ]
-  모든 채널이 Logitech Bolt 리시버여야 합니다. 블루투스 직결은 수동 전환은
-  되지만 자동 추종의 트리거가 되지 않습니다. 자세한 근거는 HANDOFF.md.
+[ 전송 방식 ]
+  USB Logi Bolt 리시버와 블루투스 직결(BLE++ 커스텀 GATT)을 모두 지원합니다.
+  기본값(--mode auto)은 둘 다 연결돼 있으면 동시에 감시합니다.
+  특정 방식만 쓰려면 --mode usb 또는 --mode ble 옵션을 주세요.
 
 자세한 내용: README.md
 TXTEOF

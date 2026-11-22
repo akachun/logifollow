@@ -30,20 +30,34 @@ class FollowService : Service() {
         const val EXTRA_HOST = "host"
         const val EXTRA_DRY_RUN = "dryRun"
         const val EXTRA_VERBOSE = "verbose"
+        const val EXTRA_MODE = "mode"
+        const val MODE_AUTO = "auto"
+        const val MODE_USB = "usb"
+        const val MODE_BLE = "ble"
 
         private const val CHANNEL_ID = "follow"
         private const val NOTIF_ID = 1
 
         @Volatile
-        private var engine: FollowEngine? = null
+        private var engine: Engine? = null
+
+        @Volatile
+        private var isUsbMode: Boolean = false
 
         val isRunning: Boolean get() = engine != null
 
-        fun start(ctx: Context, deviceName: String?, dryRun: Boolean, verbose: Boolean) {
+        fun start(
+            ctx: Context,
+            deviceName: String?,
+            dryRun: Boolean,
+            verbose: Boolean,
+            mode: String = MODE_AUTO
+        ) {
             val i = Intent(ctx, FollowService::class.java).setAction(ACTION_START)
                 .putExtra(EXTRA_DEVICE_NAME, deviceName)
                 .putExtra(EXTRA_DRY_RUN, dryRun)
                 .putExtra(EXTRA_VERBOSE, verbose)
+                .putExtra(EXTRA_MODE, mode)
             ctx.startForegroundService(i)
         }
 
@@ -57,11 +71,11 @@ class FollowService : Service() {
     private var thread: Thread? = null
 
     /** 엔진이 아직 없을 때 들어온 명령. 엔진이 서면 그때 흘려보낸다. */
-    private val deferred = mutableListOf<FollowEngine.Cmd>()
+    private val deferred = mutableListOf<EngineCmd>()
 
     private val detachReceiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context?, i: Intent?) {
-            if (i?.action == UsbManager.ACTION_USB_DEVICE_DETACHED) {
+            if (i?.action == UsbManager.ACTION_USB_DEVICE_DETACHED && isUsbMode) {
                 Bus.log("리시버가 뽑혔습니다.")
                 shutdown()
             }
@@ -87,11 +101,11 @@ class FollowService : Service() {
         when (intent?.action) {
             ACTION_START -> startEngine(intent)
             ACTION_STOP -> { shutdown(); return START_NOT_STICKY }
-            ACTION_RESCAN -> submit(FollowEngine.Cmd.Rescan, intent)
-            ACTION_SYNC -> submit(FollowEngine.Cmd.Sync, intent)
+            ACTION_RESCAN -> submit(EngineCmd.Rescan, intent)
+            ACTION_SYNC -> submit(EngineCmd.Sync, intent)
             ACTION_SWITCH -> {
                 val h = intent.getIntExtra(EXTRA_HOST, -1)
-                if (h >= 0) submit(FollowEngine.Cmd.Switch(h), intent)
+                if (h >= 0) submit(EngineCmd.Switch(h), intent)
             }
         }
         return START_NOT_STICKY
@@ -101,13 +115,13 @@ class FollowService : Service() {
      * 바로가기로 명령이 먼저 들어올 수 있다. 그때는 엔진을 띄우고
      * 발견이 끝난 뒤 명령이 실행되도록 큐에 걸어둔다.
      */
-    private fun submit(cmd: FollowEngine.Cmd, intent: Intent) {
+    private fun submit(cmd: EngineCmd, intent: Intent) {
         val e = engine
         if (e != null) {
             e.post(cmd)
             return
         }
-        Bus.log("엔진이 아직 없습니다. 먼저 리시버를 엽니다.")
+        Bus.log("엔진이 아직 없습니다. 먼저 연결을 엽니다.")
         deferred.add(cmd)
         startEngine(intent)
     }
@@ -117,28 +131,39 @@ class FollowService : Service() {
             Bus.log("이미 실행 중입니다.")
             return
         }
+        val mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_AUTO
         val usb = getSystemService(Context.USB_SERVICE) as UsbManager
-        val dev = Usb.find(usb, intent.getStringExtra(EXTRA_DEVICE_NAME))
-        if (dev == null) {
+        val dev = if (mode != MODE_BLE) Usb.find(usb, intent.getStringExtra(EXTRA_DEVICE_NAME)) else null
+
+        val e: Engine
+        val notifText: String
+        if (dev != null) {
+            if (!usb.hasPermission(dev)) {
+                Bus.log("USB 권한이 없습니다. 앱을 열어 권한을 허용하세요.")
+                Bus.setState { it.copy(problem = "USB 권한 필요") }
+                stopSelf()
+                return
+            }
+            isUsbMode = true
+            e = FollowEngine(usb, dev)
+            notifText = dev.productName ?: "USB 리시버 감시 중"
+        } else if (mode == MODE_USB) {
             Bus.log("로지텍 리시버를 찾지 못했습니다. USB 허브 연결을 확인하세요.")
             Bus.setState { it.copy(problem = "리시버가 보이지 않습니다") }
             stopSelf()
             return
+        } else {
+            isUsbMode = false
+            e = BleFollowEngine(applicationContext)
+            notifText = "블루투스(BLE++) 감시 중"
         }
-        if (!usb.hasPermission(dev)) {
-            Bus.log("USB 권한이 없습니다. 앱을 열어 권한을 허용하세요.")
-            Bus.setState { it.copy(problem = "USB 권한 필요") }
-            stopSelf()
-            return
-        }
-        val e = FollowEngine(usb, dev).apply {
-            dryRun = intent.getBooleanExtra(EXTRA_DRY_RUN, false)
-            verbose = intent.getBooleanExtra(EXTRA_VERBOSE, false)
-        }
+
+        e.dryRun = intent.getBooleanExtra(EXTRA_DRY_RUN, false)
+        e.verbose = intent.getBooleanExtra(EXTRA_VERBOSE, false)
         engine = e
         deferred.forEach { e.post(it) }
         deferred.clear()
-        goForeground(dev.productName ?: "리시버 감시 중")
+        goForeground(notifText)
         thread = Thread(e, "logifollow-engine").apply {
             isDaemon = true
             start()
@@ -148,6 +173,7 @@ class FollowService : Service() {
             thread?.join()
             if (engine === e) {
                 engine = null
+                isUsbMode = false
                 stopSelf()
             }
         }.apply { isDaemon = true }.start()
