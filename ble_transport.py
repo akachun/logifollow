@@ -624,19 +624,21 @@ def _run_bleak(cmd, args, out, stop_event=None):
                         pkt = bytes(([ms.ch_idx, (0x01 << 4) | next_sw(), m[0]] + [0] * 18)[:18])
                         ms.cur_host = m[0]
                         asyncio.create_task(
-                            ms.handle.write_gatt_char(LOGI_CHR_UUID, pkt, response=False)
+                            ms.handle.write_gatt_char(ms.char or LOGI_CHR_UUID.lower(), pkt, response=False)
                         )
                         out("           => 마우스 -> %s" % _chan(m[0]))
             return cb
 
-        async def xact(dev, fidx, func, params, echo=None, timeout=1.2):
+        async def xact(dev, fidx, func, params, echo=None, timeout=1.5):
             sw = next_sw()
             fs = ((func & 0x0F) << 4) | (sw & 0x0F)
             pkt = bytes(([fidx, fs] + list(params) + [0] * 18)[:18])
             ev = asyncio.Event()
             waiters[dev.uid] = {"fidx": fidx, "fs": fs, "echo": echo, "ev": ev, "resp": None}
+            chr_target = dev.char or LOGI_CHR_UUID.lower()
             try:
-                await dev.handle.write_gatt_char(LOGI_CHR_UUID, pkt, response=True)
+                use_resp = getattr(dev, "use_write_resp", True)
+                await dev.handle.write_gatt_char(chr_target, pkt, response=use_resp)
                 await asyncio.wait_for(ev.wait(), timeout)
                 return waiters[dev.uid]["resp"]
             except Exception:
@@ -650,6 +652,8 @@ def _run_bleak(cmd, args, out, stop_event=None):
                 out("  BLE 후보 %d개: %s" % (
                     len(cands), ", ".join("%s(%s)" % (v[0], k) for k, v in cands.items()) or "없음"
                 ))
+            svc_uuid = LOGI_SVC_UUID.lower()
+            chr_uuid = LOGI_CHR_UUID.lower()
             newly = []
             for addr, (name, target_dev, atype) in cands.items():
                 if only_known and known_logi and addr not in known_logi:
@@ -663,17 +667,31 @@ def _run_bleak(cmd, args, out, stop_event=None):
                 client = BleakClient(target_dev, **kwargs)
                 try:
                     await client.connect(timeout=5.0)
-                    svc = client.services.get_service(LOGI_SVC_UUID)
-                    if not svc or not svc.get_characteristic(LOGI_CHR_UUID):
+                    svc = client.services.get_service(svc_uuid) or client.services.get_service(LOGI_SVC_UUID)
+                    chr_obj = (svc.get_characteristic(chr_uuid) or svc.get_characteristic(LOGI_CHR_UUID)) if svc else None
+                    if not svc or not chr_obj:
+                        if not only_known:
+                            uuids = [s.uuid for s in client.services]
+                            out("  [%s] BLE++ 서비스 없음 (발견된 서비스: %s)" % (name, ", ".join(uuids)))
                         await client.disconnect()
                         continue
                     known_logi.add(addr)
                     dev = devs.get(addr) or BleDev(addr, name)
                     dev.handle = client
+                    dev.char = chr_obj
                     dev.connected = True
+                    dev.use_write_resp = True
                     devs[addr] = dev
-                    await client.start_notify(LOGI_CHR_UUID, make_notify_cb(dev))
-                    if not await xact(dev, 0x00, 0x01, [0, 0, 0xAA]):
+                    await client.start_notify(chr_obj, make_notify_cb(dev))
+                    ping_ok = await xact(dev, 0x00, 0x01, [0, 0, 0xAA])
+                    if not ping_ok:
+                        # 일부 WinRT 드라이버는 write-without-response 로만 동작
+                        dev.use_write_resp = False
+                        ping_ok = await xact(dev, 0x00, 0x01, [0, 0, 0xAA])
+                    if not ping_ok:
+                        if not only_known:
+                            out("  [%s] BLE++ 서비스/Notify 성공했으나 Ping 응답 없음 (props=%s)"
+                                % (name, chr_obj.properties))
                         await client.disconnect()
                         dev.connected = False
                         continue
@@ -746,7 +764,7 @@ def _run_bleak(cmd, args, out, stop_event=None):
                     out("마우스는 이미 %s 입니다." % _chan(host))
                     return 0
                 pkt = bytes(([ms.ch_idx, (0x01 << 4) | next_sw(), host] + [0] * 18)[:18])
-                await ms.handle.write_gatt_char(LOGI_CHR_UUID, pkt, response=False)
+                await ms.handle.write_gatt_char(ms.char or LOGI_CHR_UUID.lower(), pkt, response=False)
                 out("마우스 -> %s  전송함" % _chan(host))
                 return 0
 
