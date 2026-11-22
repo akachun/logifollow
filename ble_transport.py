@@ -285,17 +285,14 @@ def _run_macos(cmd, args, out, stop_event=None):
                 m = ms.hosts_with(target) if target else []
                 if not m and not target and ms.n_hosts and dst < ms.n_hosts:
                     m = [dst]
-                already = bool(m) and ms.cur_host == m[0]
                 sent = False
-                if m and not already and not self.dry_run:
+                if m and not self.dry_run:
                     sent = self.send_set_host(ms, m[0])
                     if sent:
                         ms.cur_host = m[0]
                 out("%s  [이벤트] 키보드 %s -> %s" % (_ts(), _chan(src), _chan(dst)))
                 if not m:
                     out("           -> 대응하는 마우스 채널이 없습니다")
-                elif already:
-                    out("           -> 마우스는 이미 %s 입니다" % _chan(m[0]))
                 elif self.dry_run:
                     out("           -> [시험] 마우스 -> %s" % _chan(m[0]))
                 else:
@@ -709,17 +706,27 @@ def _run_windows_hid(cmd, args, out, stop_event=None):
                         m = ms.hosts_with(target) if target else []
                         if not m and not target and ms.n_hosts and dst < ms.n_hosts:
                             m = [dst]
-                        already = bool(m) and ms.cur_host == m[0]
                         sent = False
-                        if m and not already and not dry_run:
+                        if m and not dry_run:
                             sent = send_set_host(ms, m[0])
-                            if sent:
-                                ms.cur_host = m[0]
+                            if not sent:
+                                # 복귀 후 기존 핸들이 무효화된 경우 즉시 다시 열어 재전송
+                                try:
+                                    ms.handle.close()
+                                except Exception:
+                                    pass
+                                if ms in devs:
+                                    devs.remove(ms)
+                                for nd in discover_open({x.uid for x in devs}):
+                                    nd.handle.set_nonblocking(1)
+                                    devs.append(nd)
+                                    if nd.tcode == TYPE_MOUSE and nd.ch_idx:
+                                        ms = nd
+                                        sent = send_set_host(ms, m[0])
+                                        break
                         out("%s  [이벤트] 키보드 %s -> %s" % (_ts(), _chan(src), _chan(dst)))
                         if not m:
                             out("           -> 대응하는 마우스 채널이 없습니다")
-                        elif already:
-                            out("           -> 마우스는 이미 %s 입니다" % _chan(m[0]))
                         elif dry_run:
                             out("           -> [시험] 마우스 -> %s" % _chan(m[0]))
                         else:

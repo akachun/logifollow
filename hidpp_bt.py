@@ -374,16 +374,18 @@ def cmd_follow(args):
             if target is None:
                 print("      키보드 채널%d 디스크립터 없음\n" % (dst + 1))
                 continue
-            if ms.cur_host is not None and ms.desc.get(ms.cur_host) == target:
-                print("      마우스는 이미 같은 호스트\n")
-                continue
             m = ms.hosts_with(target)
             if not m:
                 print("      마우스에 대응 채널 없음: %s\n" % hexs(target))
                 continue
 
             print("      마우스 -> 채널 %d" % (m[0] + 1))
-            if ms.switch(m[0] + 1, dry=args.dry_run) and not args.dry_run:
+            ok = ms.switch(m[0] + 1, dry=args.dry_run)
+            if not ok and not args.dry_run:
+                # 복귀 후 핸들이 무효화된 경우 즉시 재연결해 재시도
+                if ms.reopen(timeout_s=3):
+                    ok = ms.switch(m[0] + 1, dry=False)
+            if ok and not args.dry_run:
                 ms.cur_host = m[0]
             print()
     except KeyboardInterrupt:
