@@ -137,6 +137,11 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# 기존에 실행 중이던 이전 프로세스가 있으면 정리한다
+Get-Process pythonw, python -ErrorAction SilentlyContinue |
+    Where-Object { $_.Path -and $_.Path.StartsWith($Venv) } |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+
 # 로그온 시 자동 실행
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $Arg = '"' + $Script + '" --log "' + $LogFile + '" follow'
@@ -153,6 +158,8 @@ try {
     $registered = $true
     Write-Host ""
     Write-Host "등록했습니다: 작업 스케줄러 > $TaskName"
+    Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Write-Host "백그라운드 감시를 바로 시작했습니다."
 } catch {
     # 작업 스케줄러 등록에 권한이 필요한 환경이 있다. 시작프로그램으로 대체한다.
     Write-Host ""
@@ -161,11 +168,12 @@ try {
     $cmd = '@echo off' + "`r`n" + 'start "" "' + $Pyw + '" ' + $Arg + "`r`n"
     Set-Content -Path $StartupCmd -Value $cmd -Encoding Default
     Write-Host "  만들었습니다: $StartupCmd"
+    Start-Process -FilePath $Pyw -ArgumentList $Arg -WorkingDirectory $Root
+    Write-Host "백그라운드 감시를 바로 시작했습니다."
     $registered = $true
 }
 
 Write-Host "로그: $LogFile"
 Write-Host ""
-Write-Host "지금 시작:   Start-ScheduledTask -TaskName $TaskName"
 Write-Host "상태 확인:   .\install\windows-setup.ps1 -Status"
 Write-Host "해제:        .\install\windows-setup.ps1 -Uninstall"
