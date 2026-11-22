@@ -477,7 +477,284 @@ def _run_macos(cmd, args, out, stop_event=None):
 
 
 # =========================================================================
-# Windows / Linux bleak 백엔드
+# Windows HID++ over BLE (0xFF43) 백엔드
+# =========================================================================
+
+def _run_windows_hid(cmd, args, out, stop_event=None):
+    """Windows BLE 직결 백엔드 (hidapi, usage_page=0xFF43, 20B Long Report).
+
+    Windows BLE HID 드라이버(HidBthLE.sys)는 로지텍 벤더 GATT(00010000-...)를
+    HID 컬렉션 0xFF43 으로 올려주며, 공유 읽기 시 ChangeHost(0x1814) 알림을
+    정상적으로 전달한다. 따라서 bleak 없이 hidapi 만으로 오프라인 동작한다.
+    """
+    try:
+        import hid
+    except ImportError:
+        out("hidapi 가 없습니다:  pip install hidapi")
+        return 1
+
+    LOGITECH_VID = 0x046D
+    VENDOR_BLE = 0xFF43
+    REPORT_LONG = 0x11
+    LONG_LEN = 20
+    DIRECT = 0xFF
+
+    sw_idx = [0]
+
+    def next_sw():
+        sw_idx[0] = (sw_idx[0] + 1) % len(SW_IDS)
+        return SW_IDS[sw_idx[0]]
+
+    def build_long(fidx, func, params, sw):
+        pkt = [REPORT_LONG, DIRECT, fidx, ((func & 0x0F) << 4) | (sw & 0x0F)]
+        pkt += list(params) + [0] * LONG_LEN
+        return bytes(pkt[:LONG_LEN])
+
+    def transact(dev, fidx, func, params, timeout_ms=1200, echo=None):
+        sw = next_sw()
+        pkt = build_long(fidx, func, params, sw)
+        try:
+            if dev.handle.write(pkt) < 0:
+                return None
+        except Exception:
+            return None
+        want = ((func & 0x0F) << 4) | (sw & 0x0F)
+        end = time.time() + timeout_ms / 1000.0
+        while time.time() < end:
+            left = max(1, int((end - time.time()) * 1000))
+            try:
+                r = dev.handle.read(64, timeout_ms=min(left, 100))
+            except Exception:
+                return None
+            if not r or len(r) < 4:
+                continue
+            r = bytes(r)
+            if r[0] != REPORT_LONG or r[1] != DIRECT:
+                continue
+            if r[2] in (0x8F, 0xFF):
+                return None
+            if (r[3] & 0x0F) == 0x00 and r[2] < 0x80:
+                dev.pending.append(r)
+                continue
+            if r[2] == fidx and r[3] == want:
+                if echo is not None and (len(r) < 5 or r[4] != echo):
+                    continue
+                return r
+        return None
+
+    def send_set_host(dev, host):
+        pkt = build_long(dev.ch_idx, 0x01, [host, 0, 0], next_sw())
+        try:
+            return dev.handle.write(pkt) >= 0
+        except Exception:
+            return False
+
+    def load_dev(dev):
+        if not transact(dev, 0x00, 0x01, [0, 0, 0xAA], timeout_ms=1500):
+            return False
+        r_ni = transact(dev, 0x00, 0x00, [0x00, 0x05, 0])
+        ni = r_ni[4] if r_ni else 0
+        if ni:
+            c = transact(dev, ni, 0x00, [0, 0, 0])
+            if c:
+                count, txt, pos = c[4], "", 0
+                while pos < count and pos < 64:
+                    nr = transact(dev, ni, 0x01, [pos, 0, 0])
+                    if not nr:
+                        break
+                    txt += bytes(nr[4:20])[:min(16, count - pos)].decode("ascii", "replace")
+                    pos += 16
+                dev.name = txt.strip()
+            t = transact(dev, ni, 0x02, [0, 0, 0])
+            if t:
+                dev.tcode = t[4]
+        r_ch = transact(dev, 0x00, 0x00, [0x18, 0x14, 0])
+        dev.ch_idx = r_ch[4] if r_ch else 0
+        r_hi = transact(dev, 0x00, 0x00, [0x18, 0x15, 0])
+        dev.hi_idx = r_hi[4] if r_hi else 0
+        if dev.ch_idx:
+            ri = transact(dev, dev.ch_idx, 0x00, [0, 0, 0])
+            if ri:
+                dev.n_hosts, dev.cur_host = ri[4], ri[5]
+        if dev.hi_idx and dev.n_hosts:
+            for h in range(dev.n_hosts):
+                rd = transact(dev, dev.hi_idx, 0x02, [h, 0, 0], echo=h)
+                if rd:
+                    dev.desc[h] = _hexs(bytes(rd[5:13]).rstrip(b"\x00"))
+        return True
+
+    def discover_open(existing_paths=()):
+        seen = {}
+        for d in hid.enumerate(LOGITECH_VID, 0):
+            if (d.get("usage_page") or 0) != VENDOR_BLE:
+                continue
+            path = d["path"]
+            if path in existing_paths:
+                continue
+            seen.setdefault(path, d.get("product_string") or "?")
+        opened = []
+        for path, prod in seen.items():
+            h = hid.device()
+            try:
+                h.open_path(path)
+                h.set_nonblocking(0)
+            except Exception:
+                continue
+            dev = BleDev(path, prod, handle=h)
+            dev.pending = []
+            if load_dev(dev):
+                opened.append(dev)
+            else:
+                try:
+                    h.close()
+                except Exception:
+                    pass
+        return opened
+
+    devs = discover_open()
+    try:
+        if cmd == "map":
+            if not devs:
+                out("블루투스로 연결된 로지텍 BLE(0xFF43) 기기가 없습니다.")
+                return 1
+            out("전송: 블루투스 직결 (Windows HID 0xFF43)")
+            _show_ble_devices(devs, out)
+            kb, ms = _find_pair(devs)
+            if kb and ms:
+                _show_ble_mapping(kb, ms, out)
+            else:
+                out("\n키보드와 마우스가 모두 이 컴퓨터에 블루투스로 연결돼 있어야 합니다.")
+            return 0
+
+        if cmd == "switch":
+            _kb, ms = _find_pair(devs)
+            if not ms:
+                out("블루투스 마우스를 찾지 못했습니다.")
+                return 1
+            host = args.channel - 1
+            if ms.n_hosts and host >= ms.n_hosts:
+                out("마우스는 채널 %d 까지만 있습니다." % ms.n_hosts)
+                return 1
+            if ms.cur_host == host:
+                out("마우스는 이미 %s 입니다." % _chan(host))
+                return 0
+            ok = send_set_host(ms, host)
+            out("마우스 -> %s  %s" % (_chan(host), "전송함" if ok else "전송 실패"))
+            return 0 if ok else 1
+
+        # follow
+        out("전송: 블루투스 직결 (Windows HID 0xFF43)")
+        if devs:
+            _show_ble_devices(devs, out)
+            kb, ms = _find_pair(devs)
+            if kb and ms:
+                _show_ble_mapping(kb, ms, out)
+        else:
+            out("현재 연결된 블루투스 로지텍 기기가 없습니다. 기기가 돌아오면 자동 연결합니다.")
+
+        for d in devs:
+            d.handle.set_nonblocking(1)
+
+        dry_run = getattr(args, "dry_run", False)
+        if dry_run:
+            out("\n*** 시험 모드 — 실제로 전송하지 않습니다 ***")
+        out("=" * 58)
+        out("키보드 Easy-Switch 키를 누르세요.  (Ctrl-C 종료)")
+        out("=" * 58 + "\n")
+
+        last_scan = time.time()
+        try:
+            while not (stop_event and stop_event.is_set()):
+                got_any = False
+                for d in list(devs):
+                    if not d.connected:
+                        continue
+                    r = None
+                    if d.pending:
+                        r = d.pending.pop(0)
+                    else:
+                        try:
+                            raw = d.handle.read(64)
+                            if raw:
+                                r = bytes(raw)
+                        except OSError:
+                            d.connected = False
+                            try:
+                                d.handle.close()
+                            except Exception:
+                                pass
+                            devs.remove(d)
+                            out("%s  [알림] %s 링크 끊김" % (_ts(), d.label))
+                            continue
+                    if not r:
+                        continue
+                    got_any = True
+                    if len(r) < 6 or r[0] != REPORT_LONG or r[1] != DIRECT:
+                        continue
+                    if (r[3] & 0x0F) != 0x00 or r[2] >= 0x80:
+                        continue
+                    fidx, src, dst = r[2], r[4], r[5]
+                    if d.tcode == TYPE_MOUSE and fidx == d.ch_idx:
+                        d.cur_host = dst
+                        out("%s  [이벤트] 마우스가 스스로 %s -> %s"
+                            % (_ts(), _chan(src), _chan(dst)))
+                    elif d.tcode == TYPE_KEYBOARD and fidx == d.ch_idx:
+                        d.cur_host = dst
+                        ms = next((x for x in devs if x.tcode == TYPE_MOUSE and x.ch_idx and x.connected), None)
+                        if not ms:
+                            out("%s  [이벤트] 키보드 %s -> %s  (연결된 마우스 없음)"
+                                % (_ts(), _chan(src), _chan(dst)))
+                            continue
+                        target = d.desc.get(dst)
+                        m = ms.hosts_with(target) if target else []
+                        if not m and not target and ms.n_hosts and dst < ms.n_hosts:
+                            m = [dst]
+                        already = bool(m) and ms.cur_host == m[0]
+                        sent = False
+                        if m and not already and not dry_run:
+                            sent = send_set_host(ms, m[0])
+                            if sent:
+                                ms.cur_host = m[0]
+                        out("%s  [이벤트] 키보드 %s -> %s" % (_ts(), _chan(src), _chan(dst)))
+                        if not m:
+                            out("           -> 대응하는 마우스 채널이 없습니다")
+                        elif already:
+                            out("           -> 마우스는 이미 %s 입니다" % _chan(m[0]))
+                        elif dry_run:
+                            out("           -> [시험] 마우스 -> %s" % _chan(m[0]))
+                        else:
+                            out("           => 마우스 -> %s  %s"
+                                % (_chan(m[0]), "" if sent else "(전송 실패)"))
+
+                # 돌아온 기기 자동 재연결 (2초 간격)
+                if time.time() - last_scan >= 2.0:
+                    last_scan = time.time()
+                    kb_ok = any(x.tcode == TYPE_KEYBOARD and x.connected for x in devs)
+                    ms_ok = any(x.tcode == TYPE_MOUSE and x.connected for x in devs)
+                    if not kb_ok or not ms_ok:
+                        existing = {x.uid for x in devs}
+                        for nd in discover_open(existing):
+                            nd.handle.set_nonblocking(1)
+                            devs.append(nd)
+                            out("%s  [알림] %s 링크 연결됨 (현재 %s)"
+                                % (_ts(), nd.label, _chan(nd.cur_host)))
+
+                if not got_any:
+                    time.sleep(0.005)
+            return 0
+        except KeyboardInterrupt:
+            out("\n종료합니다.")
+            return 0
+    finally:
+        for d in devs:
+            try:
+                d.handle.close()
+            except Exception:
+                pass
+
+
+# =========================================================================
+# Linux bleak 백엔드
 # =========================================================================
 
 def _run_bleak(cmd, args, out, stop_event=None):
@@ -819,6 +1096,12 @@ def is_ble_available():
             return True
         except ImportError:
             return False
+    if sys.platform == "win32":
+        try:
+            import hid  # noqa: F401
+            return True
+        except ImportError:
+            return False
     try:
         import bleak  # noqa: F401
         return True
@@ -829,4 +1112,6 @@ def is_ble_available():
 def run_ble(cmd, args, out, stop_event=None):
     if sys.platform == "darwin":
         return _run_macos(cmd, args, out, stop_event=stop_event)
+    if sys.platform == "win32":
+        return _run_windows_hid(cmd, args, out, stop_event=stop_event)
     return _run_bleak(cmd, args, out, stop_event=stop_event)

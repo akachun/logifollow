@@ -577,7 +577,7 @@ USB3.1 Hub
 | **macOS** | **실기기 확인** (K98M + MX Master 4) | **실기기 확인** (MX Keys Mini + M750) | `--mode auto`에서 USB + BLE 동시 감시 확인 |
 | **Android** | **실기기 확인** | **실기기 확인** (`android/` v0.3) | USB 없으면 자동으로 BLE++ 모드 시작 |
 | **iOS / iPadOS** | 불가 (공개 API 없음) | **실기기 확인** (`ios/` SwiftUI) | `ENABLE_DEBUG_DYLIB=NO`, `UIBackgroundModes: bluetooth-central` |
-| **Windows** | **실기기 확인** | 구현 완료 (**실기기 미검증**) | `ble_transport.py` WinRT + `bleak` 백엔드 |
+| **Windows** | **실기기 확인** | **실기기 확인** (`hidapi` `0xFF43`) | Windows BLE HID 드라이버가 `00010000-...`을 `0xFF43`으로 노출하므로 `bleak` 없이 `hidapi`만으로 동작 |
 
 ---
 

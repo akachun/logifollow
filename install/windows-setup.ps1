@@ -125,22 +125,6 @@ if (-not $HaveHid) {
     exit 1
 }
 
-# BLE++ 직결용 bleak (윈도우 블루투스 직결 지원)
-& $Py -c "import bleak" 2>$null
-if ($LASTEXITCODE -ne 0) {
-    $Vendor = Join-Path $Root "vendor"
-    $BleOk = $false
-    if (Test-Path $Vendor) {
-        & $Py -m pip install --no-index --find-links $Vendor --disable-pip-version-check -q bleak 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Host "bleak 설치 완료 (동봉 휠 - 오프라인)"; $BleOk = $true }
-    }
-    if (-not $BleOk) {
-        & $Py -m pip install --disable-pip-version-check -q bleak 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Host "bleak 설치 완료 (PyPI - 블루투스 직결 지원)" }
-        else { Write-Host "참고: bleak 미설치 (USB 리시버 모드는 정상 동작)" }
-    }
-}
-
 # 먼저 눈으로 확인 - 여기서 채널 표가 나오면 윈도우에서도 프로토콜이 통한 것이다
 Write-Host ""
 Write-Host "채널 대응표를 확인합니다..."

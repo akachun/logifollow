@@ -8,7 +8,7 @@ including hosts that Logi Options+ refuses to handle.*
 
 | | |
 |---|---|
-| 데스크톱 | `logifollow.py` + `ble_transport.py` — macOS (Bolt + BLE++ 실기기 확인) / Windows (Bolt 실기기 확인, BLE++ 구현됨·미검증) / Linux (미확인) |
+| 데스크톱 | `logifollow.py` + `ble_transport.py` — macOS (Bolt + BLE++ 실기기 확인) / Windows (Bolt + BLE 0xFF43 실기기 확인) / Linux (미확인) |
 | 안드로이드 (폰 / 덱스) | `android/` — USB Bolt + BLE++ 직결 하이브리드 앱, [android/README.md](android/README.md) |
 | iOS / iPadOS | `ios/` — SwiftUI + CoreBluetooth BLE++ 직결 앱, [ios/README.md](ios/README.md) |
 | 프로토콜 근거 | [HANDOFF.md](HANDOFF.md) — 전부 실측 |
@@ -197,7 +197,7 @@ ios/               iOS / iPadOS 앱 (SwiftUI + CoreBluetooth BLE++)
 | 플랫폼 | 상태 |
 |---|---|
 | macOS | **동작 확인** (Bolt 리시버 + BLE++ 직결 동시 감시, LaunchAgent 상시) |
-| Windows | Bolt 리시버 **동작 확인** / BLE++ 직결(`bleak` + WinRT) 구현 완료 (**실기기 미검증**) |
+| Windows | **동작 확인** (Bolt 리시버 + BLE 직결 `hidapi` `0xFF43`, 작업 스케줄러, 100% 오프라인 설치) |
 | Android / 삼성 덱스 | **동작 확인** (`android/` v0.3 — USB Bolt 리시버 + BLE++ 직결 모두 확인) |
 | iOS / iPadOS | **동작 확인** (`ios/` — CoreBluetooth BLE++ 직결, Xcode 빌드 설치) |
 | Linux | 미확인 (USB 코드 경로는 macOS 와 동일, BLE++ 는 `bleak`) |
