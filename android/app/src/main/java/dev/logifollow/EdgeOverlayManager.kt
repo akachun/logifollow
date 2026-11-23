@@ -51,7 +51,7 @@ class EdgeOverlayManager(
         clearAttached()
         val cfg = EdgePrefs.load(ctx)
         if (!cfg.enabled) return
-        if (cfg.leftHost < 0 && cfg.rightHost < 0) return
+        if (cfg.leftHost < 0 && cfg.rightHost < 0 && cfg.topHost < 0 && cfg.bottomHost < 0) return
         if (!Settings.canDrawOverlays(ctx)) {
             Bus.log("[엣지] '다른 앱 위에 표시' 권한이 없어 화면 경계 감지를 켤 수 없습니다.")
             return
@@ -70,10 +70,16 @@ class EdgeOverlayManager(
             }
             val wm = dCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: continue
             if (cfg.leftHost >= 0) {
-                if (attachEdge(dCtx, wm, Gravity.START, "왼쪽", cfg.leftHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, Gravity.START, false, "왼쪽", cfg.leftHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.rightHost >= 0) {
-                if (attachEdge(dCtx, wm, Gravity.END, "오른쪽", cfg.rightHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, Gravity.END, false, "오른쪽", cfg.rightHost, cfg.dwellMs, cfg.cooldownMs)) count++
+            }
+            if (cfg.topHost >= 0) {
+                if (attachEdge(dCtx, wm, Gravity.TOP, true, "위쪽", cfg.topHost, cfg.dwellMs, cfg.cooldownMs)) count++
+            }
+            if (cfg.bottomHost >= 0) {
+                if (attachEdge(dCtx, wm, Gravity.BOTTOM, true, "아래쪽", cfg.bottomHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
         }
         if (count > 0) {
@@ -87,7 +93,8 @@ class EdgeOverlayManager(
     private fun attachEdge(
         dCtx: Context,
         wm: WindowManager,
-        gravity: Int,
+        edgeGravity: Int,
+        horizontal: Boolean,
         edgeLabel: String,
         targetHost: Int,
         dwellMs: Long,
@@ -95,19 +102,22 @@ class EdgeOverlayManager(
     ): Boolean {
         val metrics = dCtx.resources.displayMetrics
         val deadzone = dp(dCtx, 60f)
-        val stripWidth = maxOf(dp(dCtx, 3f), 3)
-        val stripHeight = maxOf(metrics.heightPixels - deadzone * 2, dp(dCtx, 120f))
+        val thickness = maxOf(dp(dCtx, 3f), 3)
+        val w = if (horizontal) maxOf(metrics.widthPixels - deadzone * 2, dp(dCtx, 120f)) else thickness
+        val h = if (horizontal) thickness else maxOf(metrics.heightPixels - deadzone * 2, dp(dCtx, 120f))
+        val grav = edgeGravity or (if (horizontal) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL)
 
         val lp = WindowManager.LayoutParams(
-            stripWidth,
-            stripHeight,
+            w,
+            h,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
             PixelFormat.TRANSLUCENT
         ).apply {
-            this.gravity = gravity or Gravity.CENTER_VERTICAL
+            this.gravity = grav
         }
 
         val view = View(dCtx)

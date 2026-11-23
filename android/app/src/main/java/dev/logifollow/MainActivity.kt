@@ -38,6 +38,8 @@ class MainActivity : Activity() {
     private lateinit var chkEdge: CheckBox
     private lateinit var spEdgeLeft: Spinner
     private lateinit var spEdgeRight: Spinner
+    private lateinit var spEdgeTop: Spinner
+    private lateinit var spEdgeBottom: Spinner
     private var loadingEdgeUi = false
 
     private val onBus = { render() }
@@ -68,6 +70,8 @@ class MainActivity : Activity() {
         chkEdge = findViewById(R.id.chkEdge)
         spEdgeLeft = findViewById(R.id.spEdgeLeft)
         spEdgeRight = findViewById(R.id.spEdgeRight)
+        spEdgeTop = findViewById(R.id.spEdgeTop)
+        spEdgeBottom = findViewById(R.id.spEdgeBottom)
         setupEdgeControls()
 
         findViewById<Button>(R.id.btnStart).setOnClickListener { requestAndStart() }
@@ -224,12 +228,16 @@ class MainActivity : Activity() {
         }
         spEdgeLeft.adapter = adapter
         spEdgeRight.adapter = adapter
+        spEdgeTop.adapter = adapter
+        spEdgeBottom.adapter = adapter
 
         val cfg = EdgePrefs.load(this)
         loadingEdgeUi = true
         chkEdge.isChecked = cfg.enabled
         spEdgeLeft.setSelection(if (cfg.leftHost in 0..2) cfg.leftHost + 1 else 0)
         spEdgeRight.setSelection(if (cfg.rightHost in 0..2) cfg.rightHost + 1 else 0)
+        spEdgeTop.setSelection(if (cfg.topHost in 0..2) cfg.topHost + 1 else 0)
+        spEdgeBottom.setSelection(if (cfg.bottomHost in 0..2) cfg.bottomHost + 1 else 0)
         loadingEdgeUi = false
 
         chkEdge.setOnCheckedChangeListener { _, checked ->
@@ -258,15 +266,17 @@ class MainActivity : Activity() {
         }
         spEdgeLeft.onItemSelectedListener = itemListener
         spEdgeRight.onItemSelectedListener = itemListener
+        spEdgeTop.onItemSelectedListener = itemListener
+        spEdgeBottom.onItemSelectedListener = itemListener
     }
 
     private fun saveAndApplyEdge() {
-        val left = spEdgeLeft.selectedItemPosition - 1
-        val right = spEdgeRight.selectedItemPosition - 1
         val cfg = EdgePrefs.load(this).copy(
             enabled = chkEdge.isChecked,
-            leftHost = left,
-            rightHost = right
+            leftHost = spEdgeLeft.selectedItemPosition - 1,
+            rightHost = spEdgeRight.selectedItemPosition - 1,
+            topHost = spEdgeTop.selectedItemPosition - 1,
+            bottomHost = spEdgeBottom.selectedItemPosition - 1
         )
         EdgePrefs.save(this, cfg)
         if (FollowService.isRunning) {

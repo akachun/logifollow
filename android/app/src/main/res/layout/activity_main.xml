@@ -92,8 +92,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:layout_marginBottom="4dp">
+        android:gravity="center_vertical">
 
         <CheckBox android:id="@+id/chkEdge"
             android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -107,6 +106,25 @@
             android:layout_width="wrap_content" android:layout_height="wrap_content"
             android:layout_marginStart="6dp" android:textSize="12sp" android:text="우:" />
         <Spinner android:id="@+id/spEdgeRight"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="8dp" android:textSize="12sp" android:text="상:" />
+        <Spinner android:id="@+id/spEdgeTop"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="6dp" android:textSize="12sp" android:text="하:" />
+        <Spinner android:id="@+id/spEdgeBottom"
             android:layout_width="wrap_content" android:layout_height="wrap_content" />
     </LinearLayout>
 
