@@ -51,36 +51,48 @@ class EdgeOverlayManager(
     private fun rebuild() {
         clearAttached()
         val cfg = EdgePrefs.load(ctx)
+        val canDraw = Settings.canDrawOverlays(ctx)
+        Bus.log("[엣지] 갱신: enabled=${cfg.enabled} 권한=$canDraw 좌=${cfg.leftHost + 1} 우=${cfg.rightHost + 1} 상=${cfg.topHost + 1} 하=${cfg.bottomHost + 1}")
         if (!cfg.enabled) return
-        if (cfg.leftHost < 0 && cfg.rightHost < 0 && cfg.topHost < 0 && cfg.bottomHost < 0) return
-        if (!Settings.canDrawOverlays(ctx)) {
+        if (cfg.leftHost < 0 && cfg.rightHost < 0 && cfg.topHost < 0 && cfg.bottomHost < 0) {
+            Bus.log("[엣지] 설정된 방향이 없습니다. 좌/우/상/하 중 채널을 선택하세요.")
+            return
+        }
+        if (!canDraw) {
             Bus.log("[엣지] '다른 앱 위에 표시' 권한이 없어 화면 경계 감지를 켤 수 없습니다.")
             return
         }
 
         val dm = ctx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
         val displays = dm.displays.filter { it.state != Display.STATE_OFF }
-        val targets = if (displays.isEmpty()) listOf(null) else displays
+        val targets = if (displays.isEmpty()) listOf(dm.getDisplay(Display.DEFAULT_DISPLAY)) else displays
 
         var count = 0
         for (disp in targets) {
-            val dCtx = if (disp != null && disp.displayId != Display.DEFAULT_DISPLAY) {
-                try { ctx.createDisplayContext(disp) } catch (_: Exception) { continue }
-            } else {
-                ctx
+            if (disp == null) continue
+            val dCtx = try {
+                val base = ctx.createDisplayContext(disp)
+                if (Build.VERSION.SDK_INT >= 30) {
+                    base.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+                } else {
+                    base
+                }
+            } catch (e: Exception) {
+                Bus.log("[엣지] 디스플레이(${disp.displayId}) 컨텍스트 생성 실패: ${e.message}")
+                continue
             }
             val wm = dCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: continue
             if (cfg.leftHost >= 0) {
-                if (attachEdge(dCtx, wm, Gravity.START, false, "왼쪽", cfg.leftHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, disp.displayId, Gravity.START, false, "왼쪽", cfg.leftHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.rightHost >= 0) {
-                if (attachEdge(dCtx, wm, Gravity.END, false, "오른쪽", cfg.rightHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, disp.displayId, Gravity.END, false, "오른쪽", cfg.rightHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.topHost >= 0) {
-                if (attachEdge(dCtx, wm, Gravity.TOP, true, "위쪽", cfg.topHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, disp.displayId, Gravity.TOP, true, "위쪽", cfg.topHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.bottomHost >= 0) {
-                if (attachEdge(dCtx, wm, Gravity.BOTTOM, true, "아래쪽", cfg.bottomHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, disp.displayId, Gravity.BOTTOM, true, "아래쪽", cfg.bottomHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
         }
         if (count > 0) {
@@ -94,6 +106,7 @@ class EdgeOverlayManager(
     private fun attachEdge(
         dCtx: Context,
         wm: WindowManager,
+        displayId: Int,
         edgeGravity: Int,
         horizontal: Boolean,
         edgeLabel: String,
@@ -103,7 +116,7 @@ class EdgeOverlayManager(
     ): Boolean {
         val metrics = dCtx.resources.displayMetrics
         val deadzone = dp(dCtx, 60f)
-        val thickness = maxOf(dp(dCtx, 8f), 12)
+        val thickness = maxOf(dp(dCtx, 10f), 14)
         val w = if (horizontal) maxOf(metrics.widthPixels - deadzone * 2, dp(dCtx, 120f)) else thickness
         val h = if (horizontal) thickness else maxOf(metrics.heightPixels - deadzone * 2, dp(dCtx, 120f))
         val grav = edgeGravity or (if (horizontal) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL)
@@ -127,8 +140,8 @@ class EdgeOverlayManager(
         }
 
         val view = View(dCtx)
-        // 살짝 보이는 가이드(알파 1% 수준이 아니라, 아주 옅은 12% 초록선으로 위치 확인 가능)
-        view.setBackgroundColor(0x2800E676)
+        // 위치 확인용 반투명 초록 가이드선 (동작 확인 후 투명화 예정)
+        view.setBackgroundColor(0x5500E676)
 
         val hoverHandler: (MotionEvent) -> Boolean = { event ->
             when (event.actionMasked) {
@@ -156,10 +169,10 @@ class EdgeOverlayManager(
         return try {
             wm.addView(view, lp)
             attached.add(wm to view)
-            Bus.log("[엣지] 부착: $edgeLabel (${w}x${h}px, display=${dCtx.display?.displayId ?: 0})")
+            Bus.log("[엣지] 부착 성공: $edgeLabel (${w}x${h}px, display=$displayId)")
             true
         } catch (e: Exception) {
-            Bus.log("[엣지] 오버레이 부착 실패($edgeLabel): ${e.message}")
+            Bus.log("[엣지] 오버레이 부착 실패($edgeLabel, display=$displayId): ${e.javaClass.simpleName}: ${e.message}")
             false
         }
     }

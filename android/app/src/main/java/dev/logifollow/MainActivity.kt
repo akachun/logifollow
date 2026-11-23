@@ -281,6 +281,8 @@ class MainActivity : Activity() {
         EdgePrefs.save(this, cfg)
         if (FollowService.isRunning) {
             FollowService.command(this, FollowService.ACTION_UPDATE_EDGE)
+        } else if (cfg.enabled) {
+            Bus.log("[엣지] 설정 저장됨 — '시작' 버튼을 누르면 화면 경계 감지가 활성화됩니다.")
         }
     }
 
