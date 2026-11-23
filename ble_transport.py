@@ -98,7 +98,7 @@ def _find_pair(devs):
 # macOS CoreBluetooth 백엔드
 # =========================================================================
 
-def _run_macos(cmd, args, out, stop_event=None):
+def _run_macos(cmd, args, out, stop_event=None, controller=None):
     try:
         import objc
         from Foundation import NSObject, NSData
@@ -130,6 +130,7 @@ def _run_macos(cmd, args, out, stop_event=None):
             self.ready_queue = []
             self.waiters = {}
             self.follow_active = False
+            self.suppress_follow_until = 0.0
             return self
 
         @objc.python_method
@@ -276,6 +277,8 @@ def _run_macos(cmd, args, out, stop_event=None):
             if dev.tcode == TYPE_KEYBOARD and fidx == dev.ch_idx:
                 src, dst = val[2], val[3]
                 dev.cur_host = dst
+                if time.monotonic() < self.suppress_follow_until:
+                    return  # 자체 Edge 전환 직후 발생하는 중복 이벤트 억제
                 ms = next((d for d in devs if d.tcode == TYPE_MOUSE and d.ch_idx and d.connected), None)
                 if not ms:
                     out("%s  [이벤트] 키보드 %s -> %s  (연결된 마우스 없음)"
@@ -331,6 +334,53 @@ def _run_macos(cmd, args, out, stop_event=None):
                 return True
             except Exception:
                 return False
+
+        @objc.python_method
+        def switch_pair(self, kb_channel, dry_run=False):
+            """Edge Switch 용: 마우스 먼저 -> 30ms 후 키보드를 지정 채널(1-based)로 전환."""
+            kb_host = kb_channel - 1
+            with self.lock:
+                devs = [d for d in self.devices.values() if d.connected]
+            kb = next((d for d in devs if d.tcode == TYPE_KEYBOARD and d.ch_idx), None)
+            ms = next((d for d in devs if d.tcode == TYPE_MOUSE and d.ch_idx), None)
+            if not kb and not ms:
+                return False
+            self.suppress_follow_until = time.monotonic() + 1.5
+            # 키보드 디스크립터로 대응 마우스 채널 매핑
+            ms_host = kb_host
+            if kb and ms:
+                target_desc = kb.desc.get(kb_host)
+                if target_desc:
+                    m = ms.hosts_with(target_desc)
+                    if m:
+                        ms_host = m[0]
+            if dry_run:
+                out("%s  [엣지/시험] BLE 세트 -> 키보드 %s, 마우스 %s"
+                    % (_ts(), _chan(kb_host), _chan(ms_host)))
+                return True
+            ok_m = self.send_set_host(ms, ms_host) if ms else False
+            if ms and kb:
+                time.sleep(0.03)
+            ok_k = self.send_set_host(kb, kb_host) if kb else False
+            out("%s  [엣지] BLE 세트 -> 마우스 %s(%s), 키보드 %s(%s)"
+                % (_ts(), _chan(ms_host), "OK" if ok_m else "실패",
+                   _chan(kb_host), "OK" if ok_k else "실패"))
+            return ok_m or ok_k
+
+        @objc.python_method
+        def status_summary(self):
+            with self.lock:
+                devs = [d for d in self.devices.values() if d.connected]
+            kb = next((d for d in devs if d.tcode == TYPE_KEYBOARD and d.ch_idx), None)
+            ms = next((d for d in devs if d.tcode == TYPE_MOUSE and d.ch_idx), None)
+            if not kb and not ms:
+                return "미연결"
+            parts = []
+            if kb:
+                parts.append("%s(%s)" % (kb.name or kb.bt_name, _chan(kb.cur_host)))
+            if ms:
+                parts.append("%s(%s)" % (ms.name or ms.bt_name, _chan(ms.cur_host)))
+            return " + ".join(parts)
 
         @objc.python_method
         def load_device(self, dev):
@@ -442,6 +492,8 @@ def _run_macos(cmd, args, out, stop_event=None):
             out("현재 연결된 블루투스 로지텍 기기가 없습니다. 기기가 돌아오면 자동 연결합니다.")
 
         delegate.follow_active = True
+        if controller is not None:
+            controller.register_group("ble", delegate.switch_pair, delegate.status_summary)
         if args.dry_run:
             out("\n*** 시험 모드 — 실제로 전송하지 않습니다 ***")
         out("=" * 58)
@@ -477,7 +529,7 @@ def _run_macos(cmd, args, out, stop_event=None):
 # Windows HID++ over BLE (0xFF43) 백엔드
 # =========================================================================
 
-def _run_windows_hid(cmd, args, out, stop_event=None):
+def _run_windows_hid(cmd, args, out, stop_event=None, controller=None):
     """Windows BLE 직결 백엔드 (hidapi, usage_page=0xFF43, 20B Long Report).
 
     Windows BLE HID 드라이버(HidBthLE.sys)는 로지텍 벤더 GATT(00010000-...)를
@@ -652,6 +704,30 @@ def _run_windows_hid(cmd, args, out, stop_event=None):
         for d in devs:
             d.handle.set_nonblocking(1)
 
+        edge_queue = []
+        edge_lock = threading.Lock()
+        suppress_until = [0.0]
+
+        def win_ble_switch_pair(kb_channel, dry_run=False):
+            with edge_lock:
+                edge_queue.append((kb_channel, dry_run))
+            return True
+
+        def win_ble_status():
+            kb = next((x for x in devs if x.tcode == TYPE_KEYBOARD and x.ch_idx and x.connected), None)
+            ms = next((x for x in devs if x.tcode == TYPE_MOUSE and x.ch_idx and x.connected), None)
+            if not kb and not ms:
+                return "미연결"
+            parts = []
+            if kb:
+                parts.append("%s(%s)" % (kb.name or kb.bt_name, _chan(kb.cur_host)))
+            if ms:
+                parts.append("%s(%s)" % (ms.name or ms.bt_name, _chan(ms.cur_host)))
+            return " + ".join(parts)
+
+        if controller is not None:
+            controller.register_group("ble", win_ble_switch_pair, win_ble_status)
+
         dry_run = getattr(args, "dry_run", False)
         if dry_run:
             out("\n*** 시험 모드 — 실제로 전송하지 않습니다 ***")
@@ -662,6 +738,50 @@ def _run_windows_hid(cmd, args, out, stop_event=None):
         last_scan = time.time()
         try:
             while not (stop_event and stop_event.is_set()):
+                # Edge Switch 요청 처리 (HID 스레드에서 안전하게 전송)
+                req = None
+                with edge_lock:
+                    if edge_queue:
+                        req = edge_queue.pop(0)
+                if req is not None:
+                    kb_ch, req_dry = req
+                    kb_host = kb_ch - 1
+                    suppress_until[0] = time.monotonic() + 1.5
+                    kb = next((x for x in devs if x.tcode == TYPE_KEYBOARD and x.ch_idx and x.connected), None)
+                    ms = next((x for x in devs if x.tcode == TYPE_MOUSE and x.ch_idx and x.connected), None)
+                    ms_host = kb_host
+                    if kb and ms:
+                        tdesc = kb.desc.get(kb_host)
+                        if tdesc:
+                            mm = ms.hosts_with(tdesc)
+                            if mm:
+                                ms_host = mm[0]
+                    if req_dry or dry_run:
+                        out("%s  [엣지/시험] BLE 세트 -> 키보드 %s, 마우스 %s"
+                            % (_ts(), _chan(kb_host), _chan(ms_host)))
+                    else:
+                        ok_m = send_set_host(ms, ms_host) if ms else False
+                        if not ok_m and ms:
+                            try:
+                                ms.handle.close()
+                            except Exception:
+                                pass
+                            if ms in devs:
+                                devs.remove(ms)
+                            for nd in discover_open({x.uid for x in devs}):
+                                nd.handle.set_nonblocking(1)
+                                devs.append(nd)
+                                if nd.tcode == TYPE_MOUSE and nd.ch_idx:
+                                    ms = nd
+                                    ok_m = send_set_host(ms, ms_host)
+                                    break
+                        if ms and kb:
+                            time.sleep(0.03)
+                        ok_k = send_set_host(kb, kb_host) if kb else False
+                        out("%s  [엣지] BLE 세트 -> 마우스 %s(%s), 키보드 %s(%s)"
+                            % (_ts(), _chan(ms_host), "OK" if ok_m else "실패",
+                               _chan(kb_host), "OK" if ok_k else "실패"))
+
                 got_any = False
                 for d in list(devs):
                     if not d.connected:
@@ -697,6 +817,8 @@ def _run_windows_hid(cmd, args, out, stop_event=None):
                             % (_ts(), _chan(src), _chan(dst)))
                     elif d.tcode == TYPE_KEYBOARD and fidx == d.ch_idx:
                         d.cur_host = dst
+                        if time.monotonic() < suppress_until[0]:
+                            continue  # 자체 Edge 전환 직후 중복 이벤트 억제
                         ms = next((x for x in devs if x.tcode == TYPE_MOUSE and x.ch_idx and x.connected), None)
                         if not ms:
                             out("%s  [이벤트] 키보드 %s -> %s  (연결된 마우스 없음)"
@@ -753,6 +875,8 @@ def _run_windows_hid(cmd, args, out, stop_event=None):
             out("\n종료합니다.")
             return 0
     finally:
+        if controller is not None:
+            controller.unregister_group("ble")
         for d in devs:
             try:
                 d.handle.close()
@@ -1116,9 +1240,9 @@ def is_ble_available():
         return False
 
 
-def run_ble(cmd, args, out, stop_event=None):
+def run_ble(cmd, args, out, stop_event=None, controller=None):
     if sys.platform == "darwin":
-        return _run_macos(cmd, args, out, stop_event=stop_event)
+        return _run_macos(cmd, args, out, stop_event=stop_event, controller=controller)
     if sys.platform == "win32":
-        return _run_windows_hid(cmd, args, out, stop_event=stop_event)
+        return _run_windows_hid(cmd, args, out, stop_event=stop_event, controller=controller)
     return _run_bleak(cmd, args, out, stop_event=stop_event)

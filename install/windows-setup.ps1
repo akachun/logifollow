@@ -142,9 +142,9 @@ Get-Process pythonw, python -ErrorAction SilentlyContinue |
     Where-Object { $_.Path -and $_.Path.StartsWith($Venv) } |
     Stop-Process -Force -ErrorAction SilentlyContinue
 
-# 로그온 시 자동 실행
+# 로그온 시 자동 실행 (시스템 트레이 + USB/BLE + Edge Switch 통합 모드)
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-$Arg = '"' + $Script + '" --log "' + $LogFile + '" follow'
+$Arg = '"' + $Script + '" --log "' + $LogFile + '" tray'
 $registered = $false
 try {
     $Action  = New-ScheduledTaskAction -Execute $Pyw -Argument $Arg -WorkingDirectory $Root

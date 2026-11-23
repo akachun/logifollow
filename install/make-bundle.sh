@@ -27,7 +27,7 @@ rm -rf "$STAGE" "$OUT/$NAME.zip"
 mkdir -p "$STAGE"
 
 # 본체와 도구
-cp logifollow.py ble_transport.py ble_gatt_probe.py hidpp_probe9.py hidpp_bt.py sniff_bt.py README.md HANDOFF.md "$STAGE/"
+cp logifollow.py ble_transport.py edge_config.py edge_watcher.py tray_ui.py ble_gatt_probe.py hidpp_probe9.py hidpp_bt.py sniff_bt.py README.md HANDOFF.md "$STAGE/"
 cp -R install "$STAGE/"
 cp -R vendor "$STAGE/"
 

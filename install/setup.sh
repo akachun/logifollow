@@ -40,13 +40,14 @@ fi
 
 "$VPY" -c "import hid; print('hidapi 확인 완료')"
 
-# BLE++ 직결용 의존성 (macOS: CoreBluetooth PyObjC, Linux: bleak)
+# BLE++ 직결 및 Edge Switch / 메뉴바 UI 의존성
 if [ "$(uname -s)" = "Darwin" ]; then
-    if ! "$VPY" -c "import CoreBluetooth, dispatch" 2>/dev/null; then
+    if ! "$VPY" -c "import CoreBluetooth, dispatch, Quartz, AppKit" 2>/dev/null; then
         "$VPY" -m pip install --disable-pip-version-check -q \
-            pyobjc-framework-CoreBluetooth pyobjc-framework-libdispatch 2>/dev/null \
-            && echo "BLE++(CoreBluetooth) 설치 완료" \
-            || echo "참고: BLE++(CoreBluetooth) 미설치 (USB 리시버 모드는 정상 동작)"
+            pyobjc-framework-CoreBluetooth pyobjc-framework-libdispatch \
+            pyobjc-framework-Quartz pyobjc-framework-Cocoa 2>/dev/null \
+            && echo "macOS BLE++ / Edge Switch / 메뉴바 UI 의존성 설치 완료" \
+            || echo "참고: PyObjC 일부 미설치 (USB 리시버 모드는 정상 동작)"
     fi
 else
     if ! "$VPY" -c "import bleak" 2>/dev/null; then

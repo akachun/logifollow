@@ -558,12 +558,35 @@ def cmd_switch(args):
         rx.close()
 
 
-def cmd_follow(args, stop_event=None):
+def cmd_follow(args, stop_event=None, controller=None):
     rx = Receiver.open()
     if not rx:
         return 1
     orig = None
     s = Session(rx)
+    edge_queue = []
+    edge_lock = threading.Lock()
+    state = {"kb": None, "ms": None, "suppress_until": 0.0}
+
+    def usb_switch_pair(kb_channel, dry_run=False):
+        with edge_lock:
+            edge_queue.append((kb_channel, dry_run))
+        return True
+
+    def usb_status():
+        kb, ms = state["kb"], state["ms"]
+        if not kb and not ms:
+            return "대기 중"
+        parts = []
+        if kb:
+            parts.append("%s(%s)" % (kb.name or "키보드", chan(kb.cur_host)))
+        if ms:
+            parts.append("%s(%s)" % (ms.name or "마우스", chan(ms.cur_host)))
+        return " + ".join(parts)
+
+    if controller is not None:
+        controller.register_group("usb", usb_switch_pair, usb_status)
+
     try:
         # 기기가 다른 채널에 가 있으면 돌아올 때까지 기다린다.
         # 여기서 종료해버리면 launchd/작업스케줄러가 다시 띄울 때까지
@@ -582,6 +605,7 @@ def cmd_follow(args, stop_event=None):
                 time.sleep(0.5)
         if stop_event and stop_event.is_set():
             return 0
+        state["kb"], state["ms"] = kb, ms
         show(devs)
         mapping(kb, ms)
 
@@ -600,8 +624,35 @@ def cmd_follow(args, stop_event=None):
         out("=" * 58 + "\n")
 
         while not (stop_event and stop_event.is_set()):
+            # Edge Switch 요청이 들어와 있으면 USB 스레드에서 안전하게 직접 전송
+            req = None
+            with edge_lock:
+                if edge_queue:
+                    req = edge_queue.pop(0)
+            if req is not None:
+                kb_ch, dry = req
+                kb_host = kb_ch - 1
+                state["suppress_until"] = time.monotonic() + 1.5
+                target_desc = kb.desc.get(kb_host)
+                m = ms.hosts_with(target_desc) if target_desc else []
+                ms_host = m[0] if m else kb_host
+                if dry or args.dry_run:
+                    out("%s  [엣지/시험] USB 세트 -> 키보드 %s, 마우스 %s"
+                        % (ts(), chan(kb_host), chan(ms_host)))
+                else:
+                    ok_m = s.set_host(ms, ms_host)
+                    time.sleep(0.03)
+                    ok_k = s.set_host(kb, kb_host)
+                    if ok_m:
+                        ms.cur_host = ms_host
+                    if ok_k:
+                        kb.cur_host = kb_host
+                    out("%s  [엣지] USB 세트 -> 마우스 %s(%s), 키보드 %s(%s)"
+                        % (ts(), chan(ms_host), "OK" if ok_m else "실패",
+                           chan(kb_host), "OK" if ok_k else "실패"))
+
             try:
-                r = s.read(200)
+                r = s.read(100)
             except OSError as e:
                 out("%s  읽기 오류(%s). 리시버를 다시 엽니다..." % (ts(), e))
                 rx.close()
@@ -621,16 +672,19 @@ def cmd_follow(args, stop_event=None):
                 k2, m2 = find_pair(fresh)
                 if k2 and m2:
                     kb, ms = k2, m2
+                    state["kb"], state["ms"] = kb, ms
                 out("%s  리시버를 다시 열었습니다." % ts())
                 continue
             if not r or len(r) < 4:
                 continue
-            handle(s, r, kb, ms, args)
+            handle(s, r, kb, ms, args, suppress_until=state["suppress_until"])
         return 0
     except KeyboardInterrupt:
         out("\n종료합니다.")
         return 0
     finally:
+        if controller is not None:
+            controller.unregister_group("usb")
         if rx and orig is not None:
             try:
                 s.set_flags(orig)
@@ -640,7 +694,7 @@ def cmd_follow(args, stop_event=None):
             rx.close()
 
 
-def handle(s, r, kb, ms, args):
+def handle(s, r, kb, ms, args, suppress_until=0.0):
     slot, b2, b3 = r[1], r[2], r[3]
 
     if b2 in (NOTIF_CONNECTION, NOTIF_DISCONNECTION):
@@ -676,6 +730,8 @@ def handle(s, r, kb, ms, args):
     # 키보드가 떠나면서 링크 정리가 시작되므로 늑장 부리면 안 된다.
     src, dst = r[4], r[5]
     kb.cur_host = dst
+    if time.monotonic() < suppress_until:
+        return  # 자체 Edge 전환 직후 발생하는 중복 알림 무시
     target = kb.desc.get(dst)
     m = ms.hosts_with(target) if target else []
     if not m and ms.n_hosts and dst < ms.n_hosts:
@@ -712,20 +768,131 @@ def _has_usb_receiver():
         return False
 
 
+def _cmd_edge(args):
+    import edge_config
+    store = edge_config.ConfigStore(args.config)
+    sub = args.edge_cmd
+
+    if sub == "show":
+        out(edge_config.format_edge_config(store.get_edge(), store.path))
+        return 0
+
+    if sub == "set":
+        kw = {}
+        if args.enable:
+            kw["enabled"] = True
+        elif args.disable:
+            kw["enabled"] = False
+        if args.trigger:
+            kw["trigger"] = args.trigger
+        if args.push_px is not None:
+            kw["push_px"] = args.push_px
+        if args.dwell_ms is not None:
+            kw["dwell_ms"] = args.dwell_ms
+        if args.modifier is not None:
+            kw["modifier"] = None if args.modifier == "none" else args.modifier
+        if args.target is not None:
+            kw["target_group"] = args.target
+        edges = {}
+        for k in ("left", "right", "top", "bottom"):
+            v = getattr(args, k, None)
+            if v is not None:
+                edges[k] = None if v == 0 else v
+        if edges:
+            kw["edges"] = edges
+        cfg = store.update_edge(**kw)
+        out("설정을 저장했습니다:\n")
+        out(edge_config.format_edge_config(cfg, store.path))
+        return 0
+
+    if sub == "test":
+        import edge_watcher
+        cfg = store.get_edge()
+        # 테스트 모드에서는 임시로 enabled=True, 미설정 경계는 예시 채널(좌=2, 우=3)로 감도 확인 가능
+        test_cfg = dict(cfg)
+        test_cfg["enabled"] = True
+        if not any(test_cfg["edges"].values()):
+            test_cfg["edges"] = {"left": 2, "right": 3, "top": None, "bottom": None}
+            out("(설정된 경계가 없어 임시로 왼쪽=채널2, 오른쪽=채널3 으로 감도 테스트합니다)\n")
+        out(edge_config.format_edge_config(test_cfg, store.path))
+        out("\n화면 경계를 밀어보세요. 실제 전환 없이 감지만 출력합니다. (Ctrl-C 종료)\n")
+
+        def on_trig(edge, target, src):
+            out("%s  [엣지 감지!] %s 경계 -> 채널%d" % (ts(), edge, target))
+
+        w = edge_watcher.create_edge_watcher(lambda: test_cfg, on_trig, out)
+        if not w:
+            return 1
+        w.start()
+        try:
+            while True:
+                time.sleep(0.2)
+        except KeyboardInterrupt:
+            out("\n종료합니다.")
+        finally:
+            w.stop()
+        return 0
+    return 1
+
+
+def _start_follow_workers(args, has_usb, has_ble, ble_transport, stop_ev, controller):
+    threads = []
+    if args.mode in ("auto", "usb") and has_usb:
+        t = threading.Thread(
+            target=cmd_follow, args=(args, stop_ev, controller),
+            name="follow-usb", daemon=True,
+        )
+        t.start()
+        threads.append(t)
+    if args.mode in ("auto", "ble") and has_ble and ble_transport is not None:
+        t = threading.Thread(
+            target=ble_transport.run_ble,
+            args=("follow", args, out, stop_ev, controller),
+            name="follow-ble", daemon=True,
+        )
+        t.start()
+        threads.append(t)
+    return threads
+
+
 def main():
     global _LOG
     p = argparse.ArgumentParser(description="키보드를 따라 마우스 채널을 옮긴다")
     p.add_argument("--log", help="로그 파일 경로")
+    p.add_argument("--config", help="Edge Switch 설정 파일 경로")
     p.add_argument("--mode", choices=("auto", "usb", "ble"), default="auto",
-                   help="전송 방식: auto(기본, 리시버 우선 후 BLE++), usb, ble")
+                   help="전송 방식: auto(기본, USB+BLE 동시), usb, ble")
     sub = p.add_subparsers(dest="cmd", required=True)
+
     mp = sub.add_parser("map", help="채널 대응표 확인")
     mp.add_argument("--raw", action="store_true",
                     help="호스트 디스크립터 원시 응답까지 출력 (진단용)")
+
     f = sub.add_parser("follow", help="상시 감시")
     f.add_argument("--dry-run", action="store_true", help="판단만 하고 전송하지 않음")
+
+    tr = sub.add_parser("tray", help="메뉴바/시스템 트레이 UI 포함 상시 감시 (macOS / Windows)")
+    tr.add_argument("--dry-run", action="store_true", help="시험 모드로 시작")
+
     sw = sub.add_parser("switch", help="마우스를 지정 채널로")
     sw.add_argument("channel", type=int, choices=(1, 2, 3, 4, 5, 6))
+
+    ed = sub.add_parser("edge", help="화면 경계선(Edge Switch) 설정 및 테스트")
+    ed_sub = ed.add_subparsers(dest="edge_cmd", required=True)
+    ed_sub.add_parser("show", help="현재 경계 설정 보기")
+    ed_sub.add_parser("test", help="경계 감도 테스트 (실제 전환 안 함)")
+    ed_set = ed_sub.add_parser("set", help="경계 설정 변경")
+    ed_set.add_argument("--enable", action="store_true", help="경계 전환 켜기")
+    ed_set.add_argument("--disable", action="store_true", help="경계 전환 끄기")
+    ed_set.add_argument("--trigger", choices=("push", "dwell"), help="트리거 방식")
+    ed_set.add_argument("--push-px", type=int, help="벽 밀기 누적 거리(px)")
+    ed_set.add_argument("--dwell-ms", type=int, help="체류 시간(ms)")
+    ed_set.add_argument("--modifier", choices=("none", "ctrl", "alt", "shift", "cmd"))
+    ed_set.add_argument("--target", choices=("auto", "usb", "ble", "all"))
+    for k in ("left", "right", "top", "bottom"):
+        ed_set.add_argument("--" + k, type=int, choices=(0, 1, 2, 3, 4, 5, 6),
+                            help="%s 경계 대상 채널 (0=해제)" % k)
+
     args = p.parse_args()
 
     if args.log:
@@ -738,15 +905,9 @@ def main():
     if not hasattr(args, "dry_run"):
         args.dry_run = False
 
-    if args.mode == "ble":
-        import ble_transport
-        return ble_transport.run_ble(args.cmd, args, out)
+    if args.cmd == "edge":
+        return _cmd_edge(args)
 
-    if args.mode == "usb":
-        fn = {"map": cmd_map, "follow": cmd_follow, "switch": cmd_switch}[args.cmd]
-        return fn(args)
-
-    # auto: USB 리시버와 BLE++ 를 모두 확인해 동시 지원한다
     has_usb = _has_usb_receiver()
     has_ble = False
     ble_transport = None
@@ -757,6 +918,44 @@ def main():
             has_ble = True
     except Exception:
         pass
+
+    if args.cmd == "tray":
+        import edge_config
+        import edge_watcher
+        import tray_ui
+
+        store = edge_config.ConfigStore(args.config)
+        controller = edge_watcher.SwitchController(store, out, dry_run=args.dry_run)
+        stop_ev = threading.Event()
+        threads = _start_follow_workers(args, has_usb, has_ble, ble_transport, stop_ev, controller)
+        watcher = edge_watcher.create_edge_watcher(store.get_edge, controller.trigger_edge, out)
+        if watcher:
+            watcher.start()
+
+        def cleanup():
+            stop_ev.set()
+            if watcher:
+                watcher.stop()
+            for t in threads:
+                t.join(timeout=2.0)
+
+        try:
+            return tray_ui.run_tray(
+                store, controller, stop_ev, log_path=args.log, on_quit=cleanup
+            )
+        finally:
+            cleanup()
+
+    if args.mode == "ble":
+        if not ble_transport:
+            import ble_transport as _bt
+            ble_transport = _bt
+        if args.cmd != "follow":
+            return ble_transport.run_ble(args.cmd, args, out)
+
+    if args.mode == "usb" and args.cmd != "follow":
+        fn = {"map": cmd_map, "switch": cmd_switch}[args.cmd]
+        return fn(args)
 
     if args.cmd == "map":
         rc_usb = 1
@@ -781,30 +980,42 @@ def main():
             return ble_transport.run_ble("switch", args, out)
         return cmd_switch(args)
 
-    # follow: USB 와 BLE++ 를 동시에 감시한다
-    if has_usb and has_ble:
-        stop_ev = threading.Event()
-        out("== 하이브리드 감시 시작 (USB 리시버 + 블루투스 BLE++) ==")
-        t_usb = threading.Thread(target=cmd_follow, args=(args, stop_ev),
-                                 name="follow-usb", daemon=True)
-        t_ble = threading.Thread(target=ble_transport.run_ble,
-                                 args=("follow", args, out, stop_ev),
-                                 name="follow-ble", daemon=True)
-        t_usb.start()
-        t_ble.start()
-        try:
-            while t_usb.is_alive() or t_ble.is_alive():
-                time.sleep(0.3)
-        except KeyboardInterrupt:
-            out("\n종료합니다...")
-            stop_ev.set()
-            t_usb.join(timeout=3.0)
-            t_ble.join(timeout=3.0)
-        return 0
+    # follow: USB / BLE 감시 + Edge Switch(설정이 켜져 있을 때) 동시 실행
+    import edge_config
+    import edge_watcher
+    store = edge_config.ConfigStore(args.config)
+    controller = edge_watcher.SwitchController(store, out, dry_run=args.dry_run)
+    stop_ev = threading.Event()
+    watcher = None
+    if store.get_edge().get("enabled") and edge_watcher.is_edge_watcher_available():
+        watcher = edge_watcher.create_edge_watcher(store.get_edge, controller.trigger_edge, out)
+        if watcher:
+            watcher.start()
+            out("== 화면 경계 전환(Edge Switch) 활성화됨 ==")
 
-    if has_ble and not has_usb:
-        return ble_transport.run_ble("follow", args, out)
-    return cmd_follow(args)
+    threads = _start_follow_workers(args, has_usb, has_ble, ble_transport, stop_ev, controller)
+    if not threads:
+        if watcher:
+            watcher.stop()
+        return cmd_follow(args)
+
+    if len(threads) > 1:
+        out("== 하이브리드 감시 시작 (USB 리시버 + 블루투스 BLE++) ==")
+
+    try:
+        while any(t.is_alive() for t in threads):
+            time.sleep(0.3)
+    except KeyboardInterrupt:
+        out("\n종료합니다...")
+        stop_ev.set()
+        if watcher:
+            watcher.stop()
+        for t in threads:
+            t.join(timeout=3.0)
+    finally:
+        if watcher:
+            watcher.stop()
+    return 0
 
 
 if __name__ == "__main__":
