@@ -3,6 +3,7 @@ package dev.logifollow
 import android.content.Context
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
@@ -102,7 +103,7 @@ class EdgeOverlayManager(
     ): Boolean {
         val metrics = dCtx.resources.displayMetrics
         val deadzone = dp(dCtx, 60f)
-        val thickness = maxOf(dp(dCtx, 3f), 3)
+        val thickness = maxOf(dp(dCtx, 8f), 12)
         val w = if (horizontal) maxOf(metrics.widthPixels - deadzone * 2, dp(dCtx, 120f)) else thickness
         val h = if (horizontal) thickness else maxOf(metrics.heightPixels - deadzone * 2, dp(dCtx, 120f))
         val grav = edgeGravity or (if (horizontal) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL)
@@ -113,24 +114,29 @@ class EdgeOverlayManager(
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
             this.gravity = grav
+            this.x = 0
+            this.y = 0
+            if (Build.VERSION.SDK_INT >= 28) {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
         }
 
         val view = View(dCtx)
-        view.setOnHoverListener { _, event ->
+        // 살짝 보이는 가이드(알파 1% 수준이 아니라, 아주 옅은 12% 초록선으로 위치 확인 가능)
+        view.setBackgroundColor(0x2800E676)
+
+        val hoverHandler: (MotionEvent) -> Boolean = { event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_HOVER_ENTER, MotionEvent.ACTION_HOVER_MOVE -> {
                     if (event.buttonState != 0) {
                         cancelPending()
-                        return@setOnHoverListener false
-                    }
-                    val now = System.currentTimeMillis()
-                    if (now < cooldownUntil) return@setOnHoverListener false
-                    if (pendingRunnable == null) {
+                    } else if (System.currentTimeMillis() >= cooldownUntil && pendingRunnable == null) {
+                        Bus.log("[엣지] ${edgeLabel} 경계 진입 (${dwellMs}ms 대기)")
                         val r = Runnable {
                             pendingRunnable = null
                             cooldownUntil = System.currentTimeMillis() + cooldownMs
@@ -144,10 +150,13 @@ class EdgeOverlayManager(
             }
             false
         }
+        view.setOnHoverListener { _, event -> hoverHandler(event) }
+        view.setOnGenericMotionListener { _, event -> hoverHandler(event) }
 
         return try {
             wm.addView(view, lp)
             attached.add(wm to view)
+            Bus.log("[엣지] 부착: $edgeLabel (${w}x${h}px, display=${dCtx.display?.displayId ?: 0})")
             true
         } catch (e: Exception) {
             Bus.log("[엣지] 오버레이 부착 실패($edgeLabel): ${e.message}")
