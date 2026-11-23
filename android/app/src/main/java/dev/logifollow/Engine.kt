@@ -13,4 +13,6 @@ sealed class EngineCmd {
     object Sync : EngineCmd()
     object Stop : EngineCmd()
     data class Switch(val host: Int) : EngineCmd()
+    /** 화면 경계 전환: 마우스와 키보드를 함께 지정 채널(0-based)로 전환한다. */
+    data class SwitchPair(val host: Int, val why: String = "엣지") : EngineCmd()
 }

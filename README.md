@@ -143,6 +143,8 @@ venv 를 만들고 hidapi 를 깔고, 대응표를 보여준 뒤 로그온 시 �
 ```
 python logifollow.py map                채널 대응표 (USB + BLE++ 동시 출력)
 python logifollow.py follow             상시 감시 (USB + BLE++ 동시 감시)
+python logifollow.py tray               메뉴바(macOS) / 시스템 트레이(Windows) UI + Edge Switch
+python logifollow.py edge show|set|test 화면 경계 전환(Edge Switch) 설정 및 감도 테스트
 python logifollow.py follow --dry-run   판단만, 전송 안 함
 python logifollow.py --mode ble follow  블루투스 직결만 감시
 python logifollow.py --mode usb follow  USB 리시버만 감시

@@ -13,11 +13,17 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.view.View
+import android.widget.AdapterView
+import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
 
@@ -29,6 +35,10 @@ class MainActivity : Activity() {
     private lateinit var logScroll: ScrollView
     private lateinit var chkDry: CheckBox
     private lateinit var chkVerbose: CheckBox
+    private lateinit var chkEdge: CheckBox
+    private lateinit var spEdgeLeft: Spinner
+    private lateinit var spEdgeRight: Spinner
+    private var loadingEdgeUi = false
 
     private val onBus = { render() }
 
@@ -55,6 +65,10 @@ class MainActivity : Activity() {
         logScroll = findViewById(R.id.logScroll)
         chkDry = findViewById(R.id.chkDry)
         chkVerbose = findViewById(R.id.chkVerbose)
+        chkEdge = findViewById(R.id.chkEdge)
+        spEdgeLeft = findViewById(R.id.spEdgeLeft)
+        spEdgeRight = findViewById(R.id.spEdgeRight)
+        setupEdgeControls()
 
         findViewById<Button>(R.id.btnStart).setOnClickListener { requestAndStart() }
         findViewById<Button>(R.id.btnStop).setOnClickListener {
@@ -201,6 +215,63 @@ class MainActivity : Activity() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         cm.setPrimaryClip(ClipData.newPlainText("LogiFollow", Bus.snapshot()))
         Toast.makeText(this, "로그를 복사했습니다", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setupEdgeControls() {
+        val choices = listOf("안함", "ch1", "ch2", "ch3")
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, choices).apply {
+            setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        }
+        spEdgeLeft.adapter = adapter
+        spEdgeRight.adapter = adapter
+
+        val cfg = EdgePrefs.load(this)
+        loadingEdgeUi = true
+        chkEdge.isChecked = cfg.enabled
+        spEdgeLeft.setSelection(if (cfg.leftHost in 0..2) cfg.leftHost + 1 else 0)
+        spEdgeRight.setSelection(if (cfg.rightHost in 0..2) cfg.rightHost + 1 else 0)
+        loadingEdgeUi = false
+
+        chkEdge.setOnCheckedChangeListener { _, checked ->
+            if (loadingEdgeUi) return@setOnCheckedChangeListener
+            if (checked && !Settings.canDrawOverlays(this)) {
+                Bus.log("[엣지] '다른 앱 위에 표시' 권한을 허용해 주세요.")
+                Toast.makeText(this, "'다른 앱 위에 표시' 권한을 허용한 뒤 다시 켜주세요", Toast.LENGTH_LONG).show()
+                loadingEdgeUi = true
+                chkEdge.isChecked = false
+                loadingEdgeUi = false
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+                return@setOnCheckedChangeListener
+            }
+            saveAndApplyEdge()
+        }
+
+        val itemListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                if (!loadingEdgeUi) saveAndApplyEdge()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        spEdgeLeft.onItemSelectedListener = itemListener
+        spEdgeRight.onItemSelectedListener = itemListener
+    }
+
+    private fun saveAndApplyEdge() {
+        val left = spEdgeLeft.selectedItemPosition - 1
+        val right = spEdgeRight.selectedItemPosition - 1
+        val cfg = EdgePrefs.load(this).copy(
+            enabled = chkEdge.isChecked,
+            leftHost = left,
+            rightHost = right
+        )
+        EdgePrefs.save(this, cfg)
+        if (FollowService.isRunning) {
+            FollowService.command(this, FollowService.ACTION_UPDATE_EDGE)
+        }
     }
 
     // ---- 화면 ---------------------------------------------------------

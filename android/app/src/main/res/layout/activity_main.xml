@@ -88,6 +88,28 @@
             android:textSize="12sp" android:text="자세히" />
     </LinearLayout>
 
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="4dp">
+
+        <CheckBox android:id="@+id/chkEdge"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:textSize="12sp" android:text="화면 경계" />
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="8dp" android:textSize="12sp" android:text="좌:" />
+        <Spinner android:id="@+id/spEdgeLeft"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+        <TextView
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="6dp" android:textSize="12sp" android:text="우:" />
+        <Spinner android:id="@+id/spEdgeRight"
+            android:layout_width="wrap_content" android:layout_height="wrap_content" />
+    </LinearLayout>
+
     <ScrollView
         android:id="@+id/logScroll"
         android:layout_width="match_parent"

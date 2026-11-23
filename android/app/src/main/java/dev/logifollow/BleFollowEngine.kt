@@ -82,6 +82,7 @@ class BleFollowEngine(private val ctx: Context) : Engine {
     @Volatile private var keyboard: BlePeer? = null
     @Volatile private var mouse: BlePeer? = null
     @Volatile private var kbLastHost: Int? = null
+    @Volatile private var suppressFollowUntil: Long = 0L
 
     override fun post(c: EngineCmd): Boolean = queue.offer(c)
 
@@ -461,6 +462,7 @@ class BleFollowEngine(private val ctx: Context) : Engine {
     private fun onKeyboardChangeHost(kb: BlePeer, ms: BlePeer?, from: Int, dest: Int) {
         kbLastHost = dest
         kb.info.currentHost = dest
+        if (System.currentTimeMillis() < suppressFollowUntil) return
 
         if (ms == null || !ms.connected) {
             Bus.log("[이벤트] 키보드 채널${from + 1} -> 채널${dest + 1} (연결된 마우스 없음)")
@@ -548,6 +550,7 @@ class BleFollowEngine(private val ctx: Context) : Engine {
                 if (ms == null || !ms.connected) Bus.log("연결된 마우스가 없습니다.")
                 else switchMouse(ms, c.host, "수동")
             }
+            is EngineCmd.SwitchPair -> switchPair(c.host, c.why)
             is EngineCmd.Sync -> {
                 val kb = keyboard
                 val ms = mouse
@@ -570,6 +573,36 @@ class BleFollowEngine(private val ctx: Context) : Engine {
                     return
                 }
                 switchMouse(ms, target, "맞추기")
+            }
+        }
+    }
+
+    private fun switchPair(kbHost: Int, why: String) {
+        val kb = keyboard?.takeIf { it.connected }
+        val ms = mouse?.takeIf { it.connected }
+        if (kb == null && ms == null) {
+            Bus.log("[$why] 연결된 BLE 기기가 없습니다.")
+            return
+        }
+        suppressFollowUntil = System.currentTimeMillis() + 1500L
+        val msHost = if (ms != null) resolveMouseHost(kb?.info, ms.info, kbHost) ?: kbHost else kbHost
+        if (dryRun) {
+            Bus.log("[$why/시험] BLE 마우스 -> 채널${msHost + 1}, 키보드 -> 채널${kbHost + 1} (전송 안 함)")
+            return
+        }
+        if (ms != null) {
+            switchMouse(ms, msHost, why)
+            if (kb != null) Thread.sleep(30)
+        }
+        if (kb != null) {
+            val ok = sendSetHost(kb, kbHost)
+            if (ok) {
+                kb.info.currentHost = kbHost
+                kbLastHost = kbHost
+                Bus.log("      $why: 키보드 -> 채널${kbHost + 1}")
+                updateUiState()
+            } else {
+                Bus.log("      전송 실패: 키보드 -> 채널${kbHost + 1}")
             }
         }
     }

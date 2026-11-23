@@ -32,6 +32,7 @@ class FollowEngine(
 
     /** 키보드가 마지막으로 향한 채널. 링크가 끊긴 뒤에도 기억해 둔다. */
     private var kbLastHost: Int? = null
+    @Volatile private var suppressFollowUntil: Long = 0L
 
     private var originalFlags: Int? = null
 
@@ -191,7 +192,37 @@ class FollowEngine(
                 if (m == null) Bus.log("마우스를 모릅니다. 먼저 검색하세요.")
                 else sendMouse(s, m, c.host, "수동")
             }
+            is EngineCmd.SwitchPair -> switchPair(s, c.host, c.why)
             is EngineCmd.Sync -> syncNow(s)
+        }
+    }
+
+    private fun switchPair(s: Session, kbHost: Int, why: String) {
+        val kb = keyboard
+        val m = mouse
+        if (kb == null && m == null) {
+            Bus.log("[$why] 연결된 기기가 없습니다.")
+            return
+        }
+        suppressFollowUntil = System.currentTimeMillis() + 1500L
+        val msHost = if (m != null) resolveMouseHost(kb, m, kbHost) ?: kbHost else kbHost
+        if (dryRun) {
+            Bus.log("[$why/시험] 마우스 -> 채널${msHost + 1}, 키보드 -> 채널${kbHost + 1} (전송 안 함)")
+            return
+        }
+        if (m != null) {
+            sendMouse(s, m, msHost, why)
+            if (kb != null) Thread.sleep(30)
+        }
+        if (kb != null) {
+            val ok = s.setCurrentHost(kb, kbHost)
+            if (ok) {
+                kb.currentHost = kbHost
+                kbLastHost = kbHost
+                Bus.log("      $why: 키보드 -> 채널${kbHost + 1}")
+            } else {
+                Bus.log("      전송 실패: 키보드 -> 채널${kbHost + 1}")
+            }
         }
     }
 
@@ -270,6 +301,7 @@ class FollowEngine(
     private fun onKeyboardChangeHost(s: Session, kb: DevInfo, m: DevInfo?, from: Int, dest: Int) {
         kbLastHost = dest
         kb.currentHost = dest
+        if (System.currentTimeMillis() < suppressFollowUntil) return
 
         if (m == null) {
             Bus.log("[이벤트] 키보드 채널${from + 1} -> 채널${dest + 1} (마우스를 몰라 못 따라감)")

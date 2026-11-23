@@ -5,7 +5,7 @@
 | 파일 | 용도 |
 |---|---|
 | `logifollow-*.zip` | 데스크톱 오프라인 설치 번들 (macOS / Windows, USB Bolt + BLE++ 하이브리드) |
-| `LogiFollow-debug.apk` | 안드로이드 앱 v0.3 (USB Bolt 리시버 + BLE++ 블루투스 직결 하이브리드) |
+| `LogiFollow-debug.apk` | 안드로이드 앱 v0.4 (USB Bolt + BLE++ 직결 + 화면 경계 전환 Edge Switch) |
 
 ## 데스크톱
 

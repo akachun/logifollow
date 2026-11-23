@@ -26,6 +26,7 @@ class FollowService : Service() {
         const val ACTION_RESCAN = "dev.logifollow.RESCAN"
         const val ACTION_SYNC = "dev.logifollow.SYNC"
         const val ACTION_SWITCH = "dev.logifollow.SWITCH"
+        const val ACTION_UPDATE_EDGE = "dev.logifollow.UPDATE_EDGE"
         const val EXTRA_DEVICE_NAME = "deviceName"
         const val EXTRA_HOST = "host"
         const val EXTRA_DRY_RUN = "dryRun"
@@ -69,6 +70,7 @@ class FollowService : Service() {
     }
 
     private var thread: Thread? = null
+    private var edgeOverlay: EdgeOverlayManager? = null
 
     /** 엔진이 아직 없을 때 들어온 명령. 엔진이 서면 그때 흘려보낸다. */
     private val deferred = mutableListOf<EngineCmd>()
@@ -106,6 +108,9 @@ class FollowService : Service() {
             ACTION_SWITCH -> {
                 val h = intent.getIntExtra(EXTRA_HOST, -1)
                 if (h >= 0) submit(EngineCmd.Switch(h), intent)
+            }
+            ACTION_UPDATE_EDGE -> {
+                if (engine != null) edgeOverlay?.update()
             }
         }
         return START_NOT_STICKY
@@ -164,6 +169,12 @@ class FollowService : Service() {
         deferred.forEach { e.post(it) }
         deferred.clear()
         goForeground(notifText)
+        val overlay = EdgeOverlayManager(applicationContext) { edge, targetHost ->
+            Bus.log("[엣지] ${edge} 경계 -> 채널${targetHost + 1}")
+            engine?.post(EngineCmd.SwitchPair(targetHost, "엣지($edge)"))
+        }
+        edgeOverlay = overlay
+        overlay.update()
         thread = Thread(e, "logifollow-engine").apply {
             isDaemon = true
             start()
@@ -174,12 +185,16 @@ class FollowService : Service() {
             if (engine === e) {
                 engine = null
                 isUsbMode = false
+                edgeOverlay?.removeAll()
+                edgeOverlay = null
                 stopSelf()
             }
         }.apply { isDaemon = true }.start()
     }
 
     private fun shutdown() {
+        edgeOverlay?.removeAll()
+        edgeOverlay = null
         engine?.stop()
         engine = null
         stopSelf()
@@ -187,6 +202,8 @@ class FollowService : Service() {
 
     override fun onDestroy() {
         try { unregisterReceiver(detachReceiver) } catch (_: Exception) {}
+        edgeOverlay?.removeAll()
+        edgeOverlay = null
         engine?.stop()
         engine = null
         super.onDestroy()
