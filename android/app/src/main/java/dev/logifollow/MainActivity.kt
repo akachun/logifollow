@@ -108,6 +108,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        EdgeOverlayManager.hostActivity = java.lang.ref.WeakReference(this)
         Bus.addListener(onBus)
         render()
     }

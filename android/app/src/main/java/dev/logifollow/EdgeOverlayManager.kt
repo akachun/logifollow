@@ -1,5 +1,6 @@
 package dev.logifollow
 
+import android.app.Activity
 import android.content.Context
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -13,6 +14,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import java.lang.ref.WeakReference
 
 /**
  * 화면 좌/우 가장자리에 3dp 폭의 투명 오버레이를 배치해
@@ -26,6 +28,12 @@ class EdgeOverlayManager(
     private val ctx: Context,
     private val onTrigger: (edge: String, targetHost: Int) -> Unit
 ) {
+    companion object {
+        /** DeX 화면에서 실행 중인 Activity 컨텍스트 (Samsung DeX 는 applicationContext 오버레이를 무시할 수 있음). */
+        @Volatile
+        var hostActivity: WeakReference<Activity>? = null
+    }
+
     private val main = Handler(Looper.getMainLooper())
     private val attached = mutableListOf<Pair<WindowManager, View>>()
     private var pendingRunnable: Runnable? = null
@@ -48,6 +56,7 @@ class EdgeOverlayManager(
         attached.clear()
     }
 
+    @Suppress("DEPRECATION")
     private fun rebuild() {
         clearAttached()
         val cfg = EdgePrefs.load(ctx)
@@ -64,35 +73,55 @@ class EdgeOverlayManager(
         }
 
         val dm = ctx.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
-        val displays = dm.displays.filter { it.state != Display.STATE_OFF }
-        val targets = if (displays.isEmpty()) listOf(dm.getDisplay(Display.DEFAULT_DISPLAY)) else displays
+        val allDisplays = dm.displays
+        Bus.log("[엣지] 디스플레이 목록: " + allDisplays.joinToString(", ") {
+            "id=${it.displayId}(${it.name},state=${it.state})"
+        })
+
+        // 1순위: 현재 DeX/폰 화면에 떠 있는 Activity 의 WindowManager 직접 사용
+        // Samsung DeX (Android 10) 에서는 applicationContext 기반 오버레이가 DeX 화면에
+        // 렌더링되지 않고 폰 화면으로 빠지는 경우가 있어 Activity 의 WindowManager 가 가장 확실하다.
+        val act = hostActivity?.get()?.takeIf { !it.isFinishing && !it.isDestroyed }
+        val targets = mutableListOf<Triple<Context, WindowManager, Int>>()
+
+        if (act != null) {
+            val actDisp = if (Build.VERSION.SDK_INT >= 30) act.display else act.windowManager.defaultDisplay
+            val dispId = actDisp?.displayId ?: 0
+            val dCtx = if (actDisp != null) act.createDisplayContext(actDisp) else act
+            val wm = dCtx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            targets.add(Triple(dCtx, wm, dispId))
+        } else {
+            val active = allDisplays.filter { it.state != Display.STATE_OFF }
+            val list = if (active.isEmpty()) listOfNotNull(dm.getDisplay(Display.DEFAULT_DISPLAY)) else active
+            for (disp in list) {
+                try {
+                    val base = ctx.createDisplayContext(disp)
+                    val dCtx = if (Build.VERSION.SDK_INT >= 30) {
+                        base.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+                    } else {
+                        base
+                    }
+                    val wm = dCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: continue
+                    targets.add(Triple(dCtx, wm, disp.displayId))
+                } catch (e: Exception) {
+                    Bus.log("[엣지] 디스플레이(${disp.displayId}) 컨텍스트 생성 실패: ${e.message}")
+                }
+            }
+        }
 
         var count = 0
-        for (disp in targets) {
-            if (disp == null) continue
-            val dCtx = try {
-                val base = ctx.createDisplayContext(disp)
-                if (Build.VERSION.SDK_INT >= 30) {
-                    base.createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
-                } else {
-                    base
-                }
-            } catch (e: Exception) {
-                Bus.log("[엣지] 디스플레이(${disp.displayId}) 컨텍스트 생성 실패: ${e.message}")
-                continue
-            }
-            val wm = dCtx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager ?: continue
+        for ((dCtx, wm, dispId) in targets) {
             if (cfg.leftHost >= 0) {
-                if (attachEdge(dCtx, wm, disp.displayId, Gravity.START, false, "왼쪽", cfg.leftHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, dispId, Gravity.START, false, "왼쪽", cfg.leftHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.rightHost >= 0) {
-                if (attachEdge(dCtx, wm, disp.displayId, Gravity.END, false, "오른쪽", cfg.rightHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, dispId, Gravity.END, false, "오른쪽", cfg.rightHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.topHost >= 0) {
-                if (attachEdge(dCtx, wm, disp.displayId, Gravity.TOP, true, "위쪽", cfg.topHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, dispId, Gravity.TOP, true, "위쪽", cfg.topHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
             if (cfg.bottomHost >= 0) {
-                if (attachEdge(dCtx, wm, disp.displayId, Gravity.BOTTOM, true, "아래쪽", cfg.bottomHost, cfg.dwellMs, cfg.cooldownMs)) count++
+                if (attachEdge(dCtx, wm, dispId, Gravity.BOTTOM, true, "아래쪽", cfg.bottomHost, cfg.dwellMs, cfg.cooldownMs)) count++
             }
         }
         if (count > 0) {
