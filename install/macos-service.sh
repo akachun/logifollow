@@ -74,14 +74,16 @@ install)
     <array>
         <string>$PY</string>
         <string>$ROOT/logifollow.py</string>
-        <string>follow</string>
+        <string>--log</string>
+        <string>$LOGDIR/follow.log</string>
+        <string>tray</string>
     </array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
     <!-- 리시버를 뽑으면 종료된다. 다시 꽂을 때까지 계속 재시도하되
          너무 자주 돌지 않게 30초 간격을 둔다. -->
     <key>ThrottleInterval</key><integer>30</integer>
-    <key>StandardOutPath</key><string>$LOGDIR/follow.log</string>
+    <key>StandardOutPath</key><string>/dev/null</string>
     <key>StandardErrorPath</key><string>$LOGDIR/follow.err</string>
 </dict>
 </plist>
@@ -160,7 +162,7 @@ status)
 
     echo
     echo "== 프로세스 =="
-    pgrep -fl "logifollow.py follow" || echo "떠 있지 않습니다."
+    pgrep -fl "logifollow.py" || echo "떠 있지 않습니다."
 
     echo
     echo "== 표준 출력 (마지막 20줄) =="
