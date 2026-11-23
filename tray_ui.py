@@ -505,14 +505,15 @@ def run_windows_tray(store, controller, stop_event, log_path=None, on_quit=None)
         0, cls_name, "LogiFollowTray", 0, 0, 0, 0, 0, None, None, hinst, None
     )
     if not hwnd:
-        print("Windows 트레이 윈도우 생성 실패")
+        err = kernel32.GetLastError()
+        controller.out("[트레이] Windows 트레이 윈도우 생성 실패 (GetLastError=%d)" % err)
         return 1
     hwnd_holder[0] = hwnd
 
-    IDI_APPLICATION = ctypes.c_void_p(32512)
+    IDI_INFORMATION = ctypes.c_void_p(32516)  # 파란색 원형 아이콘 (눈에 잘 띔)
     user32.LoadIconW.argtypes = [wintypes.HINSTANCE, ctypes.c_void_p]
     user32.LoadIconW.restype = wintypes.HICON
-    hicon = user32.LoadIconW(None, IDI_APPLICATION)
+    hicon = user32.LoadIconW(None, IDI_INFORMATION)
 
     nid = NOTIFYICONDATAW()
     nid.cbSize = ctypes.sizeof(NOTIFYICONDATAW)
@@ -525,7 +526,10 @@ def run_windows_tray(store, controller, stop_event, log_path=None, on_quit=None)
     nid_holder[0] = nid
     ok_add = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
     if not ok_add:
-        controller.out("Windows 트레이 아이콘 등록 실패 (Shell_NotifyIconW returned 0)")
+        err = kernel32.GetLastError()
+        controller.out("[트레이] 아이콘 등록 실패 (Shell_NotifyIconW=0, GetLastError=%d)" % err)
+    else:
+        controller.out("[트레이] Windows 시스템 트레이 아이콘 등록 완료 (우하단 시계 옆 또는 ^ 화살표 안의 파란 i 아이콘)")
     update_tip()
 
     def watch_stop():
