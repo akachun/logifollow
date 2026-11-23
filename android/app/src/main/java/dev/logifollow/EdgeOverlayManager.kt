@@ -145,7 +145,7 @@ class EdgeOverlayManager(
     ): Boolean {
         val metrics = dCtx.resources.displayMetrics
         val deadzone = dp(dCtx, 60f)
-        val thickness = maxOf(dp(dCtx, 10f), 14)
+        val thickness = maxOf(dp(dCtx, 6f), 8)
         val w = if (horizontal) maxOf(metrics.widthPixels - deadzone * 2, dp(dCtx, 120f)) else thickness
         val h = if (horizontal) thickness else maxOf(metrics.heightPixels - deadzone * 2, dp(dCtx, 120f))
         val grav = edgeGravity or (if (horizontal) Gravity.CENTER_HORIZONTAL else Gravity.CENTER_VERTICAL)
@@ -169,8 +169,7 @@ class EdgeOverlayManager(
         }
 
         val view = View(dCtx)
-        // 위치 확인용 반투명 초록 가이드선 (동작 확인 후 투명화 예정)
-        view.setBackgroundColor(0x5500E676)
+        view.setBackgroundColor(0x00000000)
 
         val hoverHandler: (MotionEvent) -> Boolean = { event ->
             when (event.actionMasked) {
