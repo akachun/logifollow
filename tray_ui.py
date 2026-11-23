@@ -295,11 +295,44 @@ def run_windows_tray(store, controller, stop_event, log_path=None, on_quit=None)
             ("uFlags", wintypes.UINT),
             ("uCallbackMessage", wintypes.UINT),
             ("hIcon", wintypes.HICON),
-            ("szTip", ctypes.c_wchar * 128),
+            ("szTip", ctypes.c_wchar * 64),
         ]
 
+    # 64비트 Windows 에서 핸들/포인터가 32비트 c_int 로 잘리지 않도록 전부 명시
+    kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+    user32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
+    user32.RegisterClassExW.restype = wintypes.ATOM
+    user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HINSTANCE]
+    user32.UnregisterClassW.restype = wintypes.BOOL
+    user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, ctypes.c_void_p,
+    ]
+    user32.CreateWindowExW.restype = wintypes.HWND
+    user32.DestroyWindow.argtypes = [wintypes.HWND]
+    user32.DestroyWindow.restype = wintypes.BOOL
     user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
     user32.DefWindowProcW.restype = LRESULT
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    user32.PostQuitMessage.argtypes = [ctypes.c_int]
+    user32.PostQuitMessage.restype = None
+    user32.GetMessageW.argtypes = [ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT]
+    user32.GetMessageW.restype = wintypes.BOOL
+    user32.TranslateMessage.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    user32.TranslateMessage.restype = wintypes.BOOL
+    user32.DispatchMessageW.argtypes = [ctypes.POINTER(wintypes.MSG)]
+    user32.DispatchMessageW.restype = LRESULT
+    user32.CreatePopupMenu.argtypes = []
+    user32.CreatePopupMenu.restype = wintypes.HMENU
+    user32.DestroyMenu.argtypes = [wintypes.HMENU]
+    user32.DestroyMenu.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+    user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    user32.GetCursorPos.restype = wintypes.BOOL
     user32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
     user32.AppendMenuW.restype = wintypes.BOOL
     user32.TrackPopupMenu.argtypes = [
@@ -342,7 +375,7 @@ def run_windows_tray(store, controller, stop_event, log_path=None, on_quit=None)
             tip += " (경계: %s)" % ("벽밀기" if cfg["trigger"] == "push" else "체류")
         if controller.dry_run:
             tip += " [시험]"
-        nid.szTip = tip[:127]
+        nid.szTip = tip[:63]
         shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
 
     def show_menu(hwnd):
@@ -490,7 +523,9 @@ def run_windows_tray(store, controller, stop_event, log_path=None, on_quit=None)
     nid.hIcon = hicon
     nid.szTip = "LogiFollow"
     nid_holder[0] = nid
-    shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+    ok_add = shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+    if not ok_add:
+        controller.out("Windows 트레이 아이콘 등록 실패 (Shell_NotifyIconW returned 0)")
     update_tip()
 
     def watch_stop():
