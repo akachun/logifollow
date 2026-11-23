@@ -43,9 +43,16 @@ fi
 # BLE++ 직결 및 Edge Switch / 메뉴바 UI 의존성
 if [ "$(uname -s)" = "Darwin" ]; then
     if ! "$VPY" -c "import CoreBluetooth, dispatch, Quartz, AppKit" 2>/dev/null; then
-        "$VPY" -m pip install --disable-pip-version-check -q \
-            pyobjc-framework-CoreBluetooth pyobjc-framework-libdispatch \
-            pyobjc-framework-Quartz pyobjc-framework-Cocoa 2>/dev/null \
+        # Python 3.9 에서는 pyobjc 12+ 가 지원되지 않으므로 11.x(<12) 로 고정한다
+        PY_MINOR=$("$VPY" -c 'import sys; print(sys.version_info[1])')
+        if [ "$PY_MINOR" -le 9 ]; then
+            "$VPY" -m pip install --upgrade --disable-pip-version-check -q pip 2>/dev/null || true
+            PYOBJC_SPEC="pyobjc-core<12 pyobjc-framework-CoreBluetooth<12 pyobjc-framework-libdispatch<12 pyobjc-framework-Quartz<12 pyobjc-framework-Cocoa<12"
+        else
+            PYOBJC_SPEC="pyobjc-framework-CoreBluetooth pyobjc-framework-libdispatch pyobjc-framework-Quartz pyobjc-framework-Cocoa"
+        fi
+        # shellcheck disable=SC2086
+        "$VPY" -m pip install --disable-pip-version-check -q $PYOBJC_SPEC \
             && echo "macOS BLE++ / Edge Switch / 메뉴바 UI 의존성 설치 완료" \
             || echo "참고: PyObjC 일부 미설치 (USB 리시버 모드는 정상 동작)"
     fi
